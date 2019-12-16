@@ -27,11 +27,11 @@ src/
     bin/
         _webdash-client/
         _webdash-server/
-  lib/
-      external/
-          json/
-          websocketpp/
-      webdash-executer/
+    lib/
+        external/
+            json/
+            websocketpp/
+        webdash-executer/
 definitions.json
 .gitignore
 init.sh
