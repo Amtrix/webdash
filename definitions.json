@@ -1,5 +1,11 @@
 {
     "myworld": {
         "rootDir": "this"
-    }
+    },
+    "env": {
+        "MYWORLD": "$.rootDir()"
+    },
+    "path-add": [
+        "$.rootDir()/app-persistent/bin"
+    ]
 }
