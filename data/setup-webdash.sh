@@ -71,9 +71,9 @@ func_localize() {
     cd $rootdir
 
     touch $rootdir/init.sh
-    echo "export MYWORLD=\"$rootdir\"" > $rootdir/init.sh
-    echo "export PATH=\$PATH:\"$rootdir/app-persistent/bin\"" >> $rootdir/init.sh
-    
+    echo "" > $rootdir/init.sh
+    echo "webdash create-built-init" >> $rootdir/init.sh
+    echo "source ./app-persistent/data/webdash-client/init.sh" >> $rootdir/init.sh
 }
 
 func_localize
