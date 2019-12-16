@@ -10,12 +10,14 @@ func_localize() {
     local git_webdash_server=https://github.com/Amtrix/src-bin-_webdash-server
     local git_webdash_built_reporter=https://github.com/Amtrix/src-bin-report-build-state
     local git_json_lib=https://github.com/nlohmann/json
+    local git_websocketpp=https://github.com/zaphoyd/websocketpp
 
     local webdash_lib=$rootdir/src/lib/webdash-executer
     local webdash_client=$rootdir/src/bin/_webdash-client
     local webdash_server=$rootdir/src/bin/_webdash-server
     local webdash_built_reporter=$rootdir/src/bin/report-build-state
     local json_lib=$rootdir/src/lib/external/json
+    local websocketpp=$rootdir/src/lib/external/websocketpp
 
     export MYWORLD="$rootdir"
 
@@ -39,6 +41,10 @@ func_localize() {
     cd "$json_lib"
     git clone "$git_json_lib" .
 
+    mkdir -pv "$websocketpp"
+    cd "$websocketpp"
+    git clone "$git_websocketpp" .
+
     sudo add-apt-repository ppa:ubuntu-toolchain-r/test
     sudo apt update
     sudo apt install g++-9
@@ -54,6 +60,20 @@ func_localize() {
     cd build
     cmake ../
     make
+
+    cd "$webdash_client"
+    mkdir build
+    cd build
+    cmake ../
+    make
+    cd ..
+    ./install.sh
+    cd $rootdir
+
+    touch $rootdir/init.sh
+    echo "export MYWORLD=\"$rootdir\"" > $rootdir/init.sh
+    echo "export PATH=\$PATH:\"$rootdir/app-persistent/bin\"" >> $rootdir/init.sh
+    
 }
 
 func_localize
