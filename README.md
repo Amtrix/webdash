@@ -10,6 +10,7 @@ A plugin based system to add new tools to the development. Simplifies the follow
   <li>Output piping and analysis</li>
   <li>Notifier system</li>
   <li>Centralized logging</li>
+  <li>Development environment setup and automation</li>
 </ul>
 
 <h2>How does it work?</h2>
