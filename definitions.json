@@ -7,5 +7,12 @@
     },
     "path-add": [
         "$.rootDir()/app-persistent/bin"
+    ],
+    "pull-projects": [
+        {
+            "source": "https://github.com/Amtrix/src-bin-report-build-state",
+            "destination": "$.rootDir()/src/bin/report-build-state",
+            "exec": ":all"
+        }
     ]
 }
