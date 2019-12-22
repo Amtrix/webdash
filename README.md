@@ -63,11 +63,11 @@ Stores global environment information. Example config follows.
 </pre></code>
 
 <ul>
-    <li><code>myworld.rootDir = this</code> -- used by webdash to identify the root directory. Only a single definitions.json with such entry should exist.</li>
-    <li><code>env.VAR</code> -- adds environment variable VAR.</li>
-    <li><code>path-add</code> -- adds listed paths to PATH.</li>
-    <li><code>pull-projects</code> -- pulls listed projects when ./data/setup-webdash.sh is called.</li>
-    <li><code>pull-projects.ENTRY.exec</code> -- calls the specified entry within the projects webdash.config.json after the cloning.</li>
+    <li><code>myworld.rootDir = this</code> - used by webdash to identify the root directory. Only a single definitions.json with such entry should exist.</li>
+    <li><code>env.VAR</code> - adds environment variable VAR.</li>
+    <li><code>path-add</code> - adds listed paths to PATH.</li>
+    <li><code>pull-projects</code> - pulls listed projects when ./data/setup-webdash.sh is called.</li>
+    <li><code>pull-projects.ENTRY.exec</code> - calls the specified entry within the project's webdash.config.json after the cloning.</li>
 </ul>
 
 <h3>WebDash Client</h3>
