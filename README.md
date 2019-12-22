@@ -1,4 +1,4 @@
-<h1>WebDash: Another Multi-purpose Build Tool</h1>
+<h1>WebDash: Another Multi-Purpose Build Tool</h1>
 
 Note: Current setup only validated for Ubuntu 18.04 LTS.
 <h2>What it does?</h2>
