@@ -12,7 +12,14 @@
         {
             "source": "https://github.com/Amtrix/src-bin-report-build-state",
             "destination": "$.rootDir()/src/bin/report-build-state",
-            "exec": ":all"
+            "exec": ":all",
+            "register": true
+        },
+        {
+            "source": "https://github.com/Amtrix/src-bin-report-repo-state",
+            "destination": "$.rootDir()/src/bin/report-repo-state",
+            "exec": ":all",
+            "register": true
         }
     ]
 }
