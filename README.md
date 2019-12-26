@@ -91,4 +91,4 @@ A service running in the background that performs scheduled execution.
 <h3>Report Build State</h3>
 Able to analyze the output of an executable and report if errors were found in the output. 
 <h3>Report Repo State</h3>
-Analyzed the current directory for uncomitted git changes.
+Analyzes the current directory for uncomitted git changes.
