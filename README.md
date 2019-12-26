@@ -18,7 +18,7 @@ My goal was to create my own flexible development environment that would be exte
 <h2>How does it work?</h2>
 <p>To initialize everything, call <code>data/setup-webdash.sh</code>. This will create the directory structure (A) and translate the <code>/definitions.json</code> file (B) into a callabe script /init.sh. For every terminal with which you want to in this environment, call <code>init.sh</code> to perform the required initialization for that instance.</p>
 
-<p>The script also deploys three other projects to extend its functionality: <i>WebDash Client</i>, <i>WebDash Server</i>, <i>Report Build State</i>.</p>
+<p>The script also deploys three other projects to extend its functionality: <i>WebDash Client</i>, <i>WebDash Server</i>, <i>Report Build State</i>, <i>Report Repo State</i>.</p>
 
 <h3>(A) Enforced directory structure</h3>
 <p>Executing data/setup-webdash.sh creates the following directory structure:</p>
@@ -63,7 +63,14 @@ Stores global environment information. Example of the provided config file follo
         {
             "source": "https://github.com/Amtrix/src-bin-report-build-state",
             "destination": "$.rootDir()/src/bin/report-build-state",
-            "exec": ":all"
+            "exec": ":all",
+            "register": true
+        },
+        {
+            "source": "https://github.com/Amtrix/src-bin-report-repo-state",
+            "destination": "$.rootDir()/src/bin/report-repo-state",
+            "exec": ":all",
+            "register": true
         }
     ]
 }
@@ -83,3 +90,5 @@ A client application that is able to parse user-created webdash.config.json file
 A service running in the background that performs scheduled execution.
 <h3>Report Build State</h3>
 Able to analyze the output of an executable and report if errors were found in the output. 
+<h3>Report Repo State</h3>
+Analyzed the current directory for uncomitted git changes.
