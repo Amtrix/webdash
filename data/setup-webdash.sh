@@ -71,10 +71,11 @@ func_localize() {
     cd $rootdir
 
     # Create bash initialization script for user to source.
-    touch $rootdir/init.sh
-    echo "" > $rootdir/init.sh
-    echo "$rootdir/app-persistent/bin/webdash create-built-init" >> $rootdir/init.sh
-    echo "source $rootdir/app-persistent/data/webdash-client/init.sh" >> $rootdir/init.sh
+    touch $rootdir/webdash.terminal.init.sh
+    echo "# Auto generated" > $rootdir/webdash.terminal.init.sh
+    echo "" >> $rootdir/webdash.terminal.init.sh
+    echo "$rootdir/app-persistent/bin/webdash create-build-init" >> $rootdir/webdash.terminal.init.sh
+    echo "source $rootdir/app-persistent/data/webdash-client/webdash.terminal.init.sh" >> $rootdir/webdash.terminal.init.sh
 
     # Create project cloner
     $rootdir/./app-persistent/bin/webdash create-project-puller
