@@ -5,6 +5,9 @@
     "env": {
         "MYWORLD": "$.rootDir()"
     },
+    "ports": {
+        "damir-homepage": "8090"
+    },
     "path-add": [
         "$.rootDir()/app-persistent/bin"
     ],
