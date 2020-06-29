@@ -5,81 +5,93 @@ func_localize() {
     local cwd="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
     local rootdir="$( realpath $cwd/..)"
 
-    local git_webdash_lib=https://github.com/Amtrix/src-lib-webdash-executer
-    local git_webdash_client=https://github.com/Amtrix/src-bin-_webdash-client
-    local git_webdash_server=https://github.com/Amtrix/src-bin-_webdash-server
-    local git_webdash_built_reporter=https://github.com/Amtrix/src-bin-report-build-state
-    local git_json_lib=https://github.com/nlohmann/json
-    local git_websocketpp=https://github.com/zaphoyd/websocketpp
-
-    local webdash_lib=$rootdir/src/lib/webdash-executer
-    local webdash_client=$rootdir/src/bin/_webdash-client
-    local webdash_server=$rootdir/src/bin/_webdash-server
-    local webdash_built_reporter=$rootdir/src/bin/report-build-state
-    local json_lib=$rootdir/src/lib/external/json
-    local websocketpp=$rootdir/src/lib/external/websocketpp
+    printf '\e[1;33m%-6s\e[m\n' "Warning: This setup will erase and re-clone all directories listed in %MYWORLD%/definitions.json"
+    su
 
     export MYWORLD="$rootdir"
+
+    local webdash_lib_dir=$rootdir/src/lib/webdash-executer
+    local webdash_client_dir=$rootdir/src/bin/_webdash-client
+    declare -a git_urls=()
+    declare -a git_destination=()
+
+    git_urls+=(https://github.com/Amtrix/src-lib-webdash-executer)
+    git_paths+=($webdash_lib_dir)
+
+    git_urls+=(https://github.com/Amtrix/src-bin-_webdash-client)
+    git_paths+=($webdash_client_dir)
+
+    git_urls+=(https://github.com/Amtrix/src-bin-_webdash-server)
+    git_paths+=($rootdir/src/bin/_webdash-server)
+
+    git_urls+=(https://github.com/Amtrix/src-bin-report-build-state)
+    git_paths+=($rootdir/src/bin/report-build-state)
+
+    git_urls+=(https://github.com/nlohmann/json)
+    git_paths+=($rootdir/src/lib/external/json)
+
+    git_urls+=(https://github.com/zaphoyd/websocketpp)
+    git_paths+=($rootdir/src/lib/external/websocketpp)
 
     mkdir -pv "$rootdir/app-temporary"
     mkdir -pv "$rootdir/app-persistent/bin"
     mkdir -pv "$rootdir/app-persistent/lib"
 
-    mkdir -pv "$webdash_lib"
-    cd "$webdash_lib"
-    git clone "$git_webdash_lib" .
+    for index in "${!git_urls[@]}"
+    do
+        local git_url=${git_urls[index]}
+        local path=${git_paths[index]}
 
-    mkdir -pv "$webdash_client"
-    cd "$webdash_client"
-    git clone "$git_webdash_client" .
-    
-    mkdir -pv "$webdash_server"
-    cd "$webdash_server"
-    git clone "$git_webdash_server" .
+        if [ ! -e $path ]
+        then
+            mkdir -pv "$path"
+            cd "$path"
+            git clone "$git_url" .
+        else
+            echo "Already cloned: $git_url -> $path"
+        fi
+    done
 
-    mkdir -pv "$json_lib"
-    cd "$json_lib"
-    git clone "$git_json_lib" .
+    printf '\e[1;33m%-6s\e[m\n' "Installing packages..."
+    sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y > /dev/null
+    sudo apt-get update > /dev/null
+    sudo apt-get install g++-9 -qq > /dev/null
 
-    mkdir -pv "$websocketpp"
-    cd "$websocketpp"
-    git clone "$git_websocketpp" .
+    sudo apt-get install cmake -qq > /dev/null
+    sudo apt-get install make -qq > /dev/null
+    sudo ln -sf g++-9 /usr/bin/g++
+    sudo apt-get install libboost-dev -qq > /dev/null
+    sudo apt-get install libboost-all-dev -qq > /dev/null
 
-    sudo add-apt-repository ppa:ubuntu-toolchain-r/test
-    sudo apt update
-    sudo apt install g++-9
-
-    sudo apt-get install cmake
-    sudo apt-get install make
-    sudo ln -s g++-9 /usr/bin/g++ 
-    sudo apt-get install libboost-dev
-    sudo apt-get install libboost-all-dev
-
-    cd "$webdash_lib"
-    mkdir build
+    printf '\e[1;33m%-6s\e[m\n' "Building WebDash executer..."
+    cd "$webdash_lib_dir"
+    mkdir -p build
     cd build
     cmake ../
     make
 
-    cd "$webdash_client"
-    mkdir build
+    printf '\e[1;33m%-6s\e[m\n' "Building WebDash client..."
+    cd "$webdash_client_dir"
+    mkdir -p build
     cd build
     cmake ../
     make
+
+    printf '\e[1;33m%-6s\e[m\n' "Installing WebDash client..."
     cd ..
     ./install.sh
     cd $rootdir
 
-    # Create bash initialization script for user to source.
+    printf '\e[1;33m%-6s\e[m\n' "Create bash initialization script for user to source..."
     touch $rootdir/webdash.terminal.init.sh
     echo "# Auto generated" > $rootdir/webdash.terminal.init.sh
     echo "" >> $rootdir/webdash.terminal.init.sh
     echo "$rootdir/app-persistent/bin/webdash create-build-init" >> $rootdir/webdash.terminal.init.sh
     echo "source $rootdir/app-persistent/data/webdash-client/webdash.terminal.init.sh" >> $rootdir/webdash.terminal.init.sh
 
-    # Create project cloner
-    $rootdir/./app-persistent/bin/webdash create-project-puller
-    $rootdir/./app-persistent/data/webdash-client/init-projects.sh
+    printf '\e[1;33m%-6s\e[m\n' "Clone, call :all, and register projects from definitions.json..."
+    $rootdir/./app-persistent/bin/webdash _internal_:create-project-cloner
+    $rootdir/./app-persistent/data/webdash-client/initialize-projects.sh
 }
 
 func_localize
