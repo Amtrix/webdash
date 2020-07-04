@@ -84,9 +84,9 @@ func_localize() {
 
     printf '\e[1;33m%-6s\e[m\n' "Create bash initialization script for user to source..."
     touch $rootdir/webdash.terminal.init.sh
-    echo "# Auto generated" > $rootdir/webdash.terminal.init.sh
+    echo "# Auto generated. Don't modify." > $rootdir/webdash.terminal.init.sh
     echo "" >> $rootdir/webdash.terminal.init.sh
-    echo "$rootdir/app-persistent/bin/webdash create-build-init" >> $rootdir/webdash.terminal.init.sh
+    echo "$rootdir/app-persistent/bin/webdash _internal_:create-build-init" >> $rootdir/webdash.terminal.init.sh
     echo "source $rootdir/app-persistent/data/webdash-client/webdash.terminal.init.sh" >> $rootdir/webdash.terminal.init.sh
 
     printf '\e[1;33m%-6s\e[m\n' "Clone, call :all, and register projects from definitions.json..."
