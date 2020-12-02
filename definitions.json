@@ -1,15 +1,18 @@
 {
     "myworld": {
-        "rootDir": "this"
+        "rootDir": "this",
+        ".field-comment": "Identifies that this definitions.json file is at root"
     },
     "env": {
         "MYWORLD": "$.rootDir()"
     },
     "ports": {
-        "damir-homepage": "8090"
+        "damir-homepage": "8090",
+        "webdash-dashboard": "12092"
     },
     "path-add": [
-        "$.rootDir()/app-persistent/bin"
+        "$.rootDir()/app-persistent/bin",
+        "$.rootDir()/app-persistent/bin/_webdash"
     ],
     "pull-projects": [
         {
