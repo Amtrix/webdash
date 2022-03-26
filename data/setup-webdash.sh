@@ -1,4 +1,4 @@
-  
+
 #/bin/bash
 
 cwd="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
@@ -14,22 +14,22 @@ func_localize() {
     declare -a git_urls=()
     declare -a git_destination=()
 
-    git_urls+=(https://github.com/Amtrix/src-lib-webdash-executer)
+    git_urls+=(git@github.com:Amtrix/src-lib-webdash-executer)
     git_paths+=($webdash_lib_dir)
 
-    git_urls+=(https://github.com/Amtrix/src-bin-_webdash-client)
+    git_urls+=(git@github.com:Amtrix/src-bin-_webdash-client)
     git_paths+=($webdash_client_dir)
 
-    git_urls+=(https://github.com/Amtrix/src-bin-_webdash-server)
+    git_urls+=(git@github.com:Amtrix/src-bin-_webdash-server.git)
     git_paths+=($MYWORLD/src/bin/_webdash-server)
 
-    git_urls+=(https://github.com/Amtrix/src-bin-report-build-state)
+    git_urls+=(git@github.com:Amtrix/src-bin-report-build-state)
     git_paths+=($MYWORLD/src/bin/report-build-state)
 
-    git_urls+=(https://github.com/nlohmann/json)
+    git_urls+=(git@github.com:nlohmann/json)
     git_paths+=($MYWORLD/src/lib/external/json)
 
-    git_urls+=(https://github.com/zaphoyd/websocketpp)
+    git_urls+=(git@github.com:zaphoyd/websocketpp)
     git_paths+=($MYWORLD/src/lib/external/websocketpp)
 
     mkdir -pv "$MYWORLD/app-temporary"
@@ -52,7 +52,8 @@ func_localize() {
             cd $cwd
 
             if [ "$remove_all" = false ];then
-                echo -n "Continuing will ERASE above clone. Continue? (y/n/yes for [A]ll) "
+                echo -n "Continuing will ERASE above clone. Continue? (y/n/[s]kip/[A]ll)"
+                printf "\n"
                 read yesno < /dev/tty
 
                 if [ "x$yesno" = "xy" ];then
@@ -60,6 +61,8 @@ func_localize() {
                 elif [ "x$yesno" = "xA" ];then
                     remove_all=true
                     rm -rf $path
+                elif [ "x$yesno" = "xs" ];then
+                    :
                 else
                     exit
                 fi
@@ -75,16 +78,25 @@ func_localize() {
 
     printf '\e[1;33m%-6s\e[m\n' "Installing packages..."
     sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y > /dev/null
+    printf '\e[1;33m%-6s\e[m\n' "Installing packages... 10%"
     sudo apt-get update > /dev/null
+    printf '\e[1;33m%-6s\e[m\n' "Installing packages... 20%"
     sudo apt-get install g++-9 -qq > /dev/null
+    printf '\e[1;33m%-6s\e[m\n' "Installing packages... 30%"
     sudo apt-get install gcc-9 -qq > /dev/null
-
+    printf '\e[1;33m%-6s\e[m\n' "Installing packages... 40%"
     sudo apt-get install cmake -qq > /dev/null
+    printf '\e[1;33m%-6s\e[m\n' "Installing packages... 50%"
     sudo apt-get install make -qq > /dev/null
+    printf '\e[1;33m%-6s\e[m\n' "Installing packages... 60%"
     sudo ln -sf g++-9 /usr/bin/g++
+    printf '\e[1;33m%-6s\e[m\n' "Installing packages... 70%"
     sudo ln -sf g++-9 /usr/bin/c++
+    printf '\e[1;33m%-6s\e[m\n' "Installing packages... 80%"
     sudo apt-get install libboost-dev -qq > /dev/null
+    printf '\e[1;33m%-6s\e[m\n' "Installing packages... 90%"
     sudo apt-get install libboost-all-dev -qq > /dev/null
+    printf '\e[1;33m%-6s\e[m\n' "Installing packages... 100%"
 
     printf '\e[1;33m%-6s\e[m\n' "Building WebDash executer..."
     cd "$webdash_lib_dir"
@@ -121,7 +133,7 @@ func_localize() {
 
     printf "\n\n"
     echo "Please add the following two lines to ~/.bashrc:"
-    echo "   export MYWORLD=\"$rootdir"
+    echo "   export MYWORLD=\"$rootdir\""
     echo "   export PATH=\"$MYWORLD/app-persistent/bin/:\$PATH\""
     printf "\n\n"
 }
