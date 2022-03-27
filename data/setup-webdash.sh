@@ -44,6 +44,10 @@ func_localize() {
         local git_url=${git_urls[index]}
         local path=${git_paths[index]}
 
+        if [ "$skip_all" = true ];then
+            continue
+        fi
+
         if [ -e $path ];then
             printf '\e[1;33m%-6s\e[m\n' "Already cloned: $git_url -> $path"
 
@@ -53,7 +57,7 @@ func_localize() {
             cd $cwd
 
             if [ "$remove_all" = false ];then
-                printf '\e[033;31m%-6s\e[m\n' "Continuing will ERASE above clone. Continue? (y/n/[s]kip/[A]ll)"
+                printf '\e[033;31m%-6s\e[m\n' "Continuing will ERASE above clone. Continue? (y/n/[s]kip/[A]ll/[S]kip all)"
                 read yesno < /dev/tty
 
                 if [ "x$yesno" = "xy" ];then
@@ -62,6 +66,9 @@ func_localize() {
                     remove_all=true
                     rm -rf $path
                 elif [ "x$yesno" = "xs" ];then
+                    continue
+                elif [ "x$yesno" = "xS" ];then
+                    skip_all=true
                     continue
                 else
                     exit
@@ -98,37 +105,41 @@ func_localize() {
     sudo apt-get install libboost-all-dev -qq > /dev/null
     printf '\e[1;33m%-6s\e[m\n' "Installing packages... 100%"
 
-    printf '\e[1;33m%-6s\e[m\n' "Building WebDash executer..."
+    printf '\e[1;33m%-6s\e[m\n' "Building WebDash executer."
     cd "$webdash_lib_dir"
     mkdir -p build
     cd build
     cmake ../
     make
 
-    printf '\e[1;33m%-6s\e[m\n' "Building WebDash client..."
+    printf '\e[1;33m%-6s\e[m\n' "Building WebDash client."
     cd "$webdash_client_dir"
     mkdir -p build
     cd build
     cmake ../
     make
 
-    printf '\e[1;33m%-6s\e[m\n' "Installing WebDash client..."
+    printf '\e[1;33m%-6s\e[m\n' "Installing WebDash client."
     cd ..
     chmod +x install.sh
     ./install.sh
     cd $MYWORLD
 
-    printf '\e[1;33m%-6s\e[m\n' "Create bash initialization script for user to source..."
+    #
+    # Generates a file for the user's shell script to `source`.
+    #
+
+    printf '\e[1;33m%-6s\e[m\n' "Create bash initialization script for user to source."
     touch $MYWORLD/webdash.terminal.init.sh
     echo "# Auto generated. Don't modify." > $MYWORLD/webdash.terminal.init.sh
     echo "" >> $MYWORLD/webdash.terminal.init.sh
     echo "$MYWORLD/app-persistent/bin/webdash _internal_:create-build-init" >> $MYWORLD/webdash.terminal.init.sh
     echo "source $MYWORLD/app-persistent/data/webdash-client/webdash.terminal.init.sh" >> $MYWORLD/webdash.terminal.init.sh
 
-    printf '\e[1;33m%-6s\e[m\n' "Installing and Starting WebDash Server..."
+    printf '\e[1;33m%-6s\e[m\n' "Installing and Starting WebDash Server."
     webdash $MYWORLD/src/bin/_webdash-server:all || { exit 1; }
 
-    printf '\e[1;33m%-6s\e[m\n' "Clone, call :all, and register projects from definitions.json..."
+    printf '\e[1;33m%-6s\e[m\n' "Clone, call :all, and register projects from definitions.json."
     $MYWORLD/./app-persistent/bin/webdash _internal_:create-project-cloner || { exit 1; }
     $MYWORLD/./app-persistent/data/webdash-client/initialize-projects.sh || { exit 1; }
 
