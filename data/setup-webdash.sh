@@ -8,6 +8,7 @@ export PATH="$MYWORLD/app-persistent/bin/:$PATH"
 
 func_localize() {
     printf '\e[1;33m%-6s\e[m\n' "Warning: This setup will erase and re-clone all directories listed in %MYWORLD%/definitions.json"
+    echo ""
 
     local webdash_lib_dir=$MYWORLD/src/lib/webdash-executer
     local webdash_client_dir=$MYWORLD/src/bin/_webdash-client
@@ -44,7 +45,7 @@ func_localize() {
         local path=${git_paths[index]}
 
         if [ -e $path ];then
-            echo "Already cloned: $git_url -> $path"
+            printf '\e[1;33m%-6s\e[m\n' "Already cloned: $git_url -> $path"
 
             echo "GIT STATUS:"
             cd $path
@@ -52,8 +53,7 @@ func_localize() {
             cd $cwd
 
             if [ "$remove_all" = false ];then
-                echo -n "Continuing will ERASE above clone. Continue? (y/n/[s]kip/[A]ll)"
-                printf "\n"
+                printf '\e[033;31m%-6s\e[m\n' "Continuing will ERASE above clone. Continue? (y/n/[s]kip/[A]ll)"
                 read yesno < /dev/tty
 
                 if [ "x$yesno" = "xy" ];then
@@ -62,7 +62,7 @@ func_localize() {
                     remove_all=true
                     rm -rf $path
                 elif [ "x$yesno" = "xs" ];then
-                    :
+                    continue
                 else
                     exit
                 fi
@@ -125,11 +125,12 @@ func_localize() {
     echo "$MYWORLD/app-persistent/bin/webdash _internal_:create-build-init" >> $MYWORLD/webdash.terminal.init.sh
     echo "source $MYWORLD/app-persistent/data/webdash-client/webdash.terminal.init.sh" >> $MYWORLD/webdash.terminal.init.sh
 
-    webdash $MYWORLD/src/bin/_webdash-server:all
+    printf '\e[1;33m%-6s\e[m\n' "Installing and Starting WebDash Server..."
+    webdash $MYWORLD/src/bin/_webdash-server:all || { exit 1; }
 
     printf '\e[1;33m%-6s\e[m\n' "Clone, call :all, and register projects from definitions.json..."
-    $MYWORLD/./app-persistent/bin/webdash _internal_:create-project-cloner
-    $MYWORLD/./app-persistent/data/webdash-client/initialize-projects.sh
+    $MYWORLD/./app-persistent/bin/webdash _internal_:create-project-cloner || { exit 1; }
+    $MYWORLD/./app-persistent/data/webdash-client/initialize-projects.sh || { exit 1; }
 
     printf "\n\n"
     echo "Please add the following two lines to ~/.bashrc:"
