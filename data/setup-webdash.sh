@@ -126,22 +126,23 @@ func_localize() {
     cd $MYWORLD
 
     #
-    # Generates a file for the user's shell script to `source`.
+    # Generates a file to initialize a user's shell with
     #
 
     printf '\e[1;33m%-6s\e[m\n' "Create bash initialization script for user to source."
     touch $MYWORLD/webdash.terminal.init.sh
-    echo "# Auto generated. Don't modify." > $MYWORLD/webdash.terminal.init.sh
-    echo "" >> $MYWORLD/webdash.terminal.init.sh
-    echo "$MYWORLD/app-persistent/bin/webdash _internal_:create-build-init" >> $MYWORLD/webdash.terminal.init.sh
-    echo "source $MYWORLD/app-persistent/data/webdash-client/webdash.terminal.init.sh" >> $MYWORLD/webdash.terminal.init.sh
+    echo "# Auto generated. Don't modify."                                                  > $MYWORLD/webdash.terminal.init.sh
+    echo "# This file references another auto-generated file by the webdash client binary." > $MYWORLD/webdash.terminal.init.sh
+    echo ""                                                                                >> $MYWORLD/webdash.terminal.init.sh
+    echo "$MYWORLD/app-persistent/bin/webdash _internal_:create-build-init"                >> $MYWORLD/webdash.terminal.init.sh
+    echo "source $MYWORLD/app-persistent/data/webdash-client/webdash.terminal.init.sh"     >> $MYWORLD/webdash.terminal.init.sh
 
     printf '\e[1;33m%-6s\e[m\n' "Installing and Starting WebDash Server."
     webdash $MYWORLD/src/bin/_webdash-server:all || { exit 1; }
 
     printf '\e[1;33m%-6s\e[m\n' "Clone, call :all, and register projects from definitions.json."
-    $MYWORLD/./app-persistent/bin/webdash _internal_:create-project-cloner || { exit 1; }
-    $MYWORLD/./app-persistent/data/webdash-client/initialize-projects.sh || { exit 1; }
+    $MYWORLD/./app-persistent/bin/webdash _internal_:create-project-cloner # || { exit 1; }
+    $MYWORLD/./app-persistent/data/webdash-client/initialize-projects.sh # || { exit 1; }
 
     printf "\n\n"
     echo "Please add the following two lines to ~/.bashrc:"
