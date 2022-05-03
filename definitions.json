@@ -7,7 +7,6 @@
         "MYWORLD": "$.rootDir()"
     },
     "ports": {
-        "damir-homepage": "8090",
         "webdash-dashboard": "12092"
     },
     "path-add": [
