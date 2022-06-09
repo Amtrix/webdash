@@ -7,7 +7,7 @@
         "MYWORLD": "$.rootDir()"
     },
     "ports": {
-        "webdash-dashboard": "12092"
+        "example-port-as-env-variable": "12092"
     },
     "path-add": [
         "$.rootDir()/app-persistent/bin",
