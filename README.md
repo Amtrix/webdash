@@ -16,7 +16,7 @@ A plugin based system to etend one's development tools. Simplifies a mutltitude 
 My goal was to create my own flexible development environment that would be extensible, supervise the health of all my projects, and remove the ramp up barriers to initiate coding.
 
 <h2>How does it work?</h2>
-<p>To initialize everything, call <code>data/setup-webdash.sh</code>. This will create the directory structure (A) and translate the <code>/definitions.json</code> file (B) into a callabe script <code>webdash.terminal.init.sh</code>. For every terminal with which you want to in this environment, call <code>webdash.terminal.init.sh</code> to perform the required initialization for that instance.</p>
+<p>To initialize everything, call <code>data/setup-webdash.sh</code>. This will create the directory structure (A) and translate the <code>/definitions.json</code> file (B) into a callabe script <code>webdash.terminal.init.sh</code>. Call <code>webdash.terminal.init.sh</code> to perform the required initialization for a terminal instance.</p>
 
 <p>The script also deploys three other projects to extend its functionality: <i>WebDash Client</i>, <i>WebDash Server</i>, <i>Report Build State</i>, <i>Report Repo State</i>.</p>
 
@@ -44,7 +44,7 @@ definitions.json
 webdash.terminal.init.sh
 </pre></code>
 
-This is your new development environment :).
+This is your new development environment.
 
 <h3>(B) /definitions.json</h3>
 Stores global environment information. Example of the provided config file follows.
