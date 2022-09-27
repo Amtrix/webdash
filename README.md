@@ -1,3 +1,4 @@
+<h1>$${\color{gold}WebDash}$$</h1>
 WebDash introduces features to automate workflows in your shell usage. In particular, it was created to introduce a consistent framework in how you handle your programing projects.
 
 <br>
@@ -27,10 +28,10 @@ WebDash introduces features to automate workflows in your shell usage. In partic
 </ul>
 
 <h2>Setup</h2>
-<h2>Required Packages</h2>
+<h3>Required Packages</h3>
 The following bash commands install all tools that are neded for this project. Go line-by-line and read comments prefixed by '#' to understand the changes to your system.
 
-<br/>
+&nbsp;<br>
 
 <pre><code># Includes newer tools.
 sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
@@ -56,7 +57,7 @@ Call the script <code>./data/setup-webdash.sh</code> to initialize everything. I
 <h2>Enforced Environment</h2>
 A special directory hierarchy is enforced by WebDash.
 
-<br/>
+&nbsp;<br>
 
 <pre><code>app-persistent/
     bin/
@@ -84,7 +85,7 @@ This is your new development environment.
 <h2>webdash-profile.json</h2>
 Located in the top-level directory after setup is completed. Defines all global behavior.
 
-<br/>
+&nbsp;<br>
 
 <pre><code>{
     "myworld": {
