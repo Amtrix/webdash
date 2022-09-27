@@ -124,6 +124,8 @@ func_localize() {
     ./install.sh
     cd $MYWORLD
 
+    cp -n $MYWORLD/webdash-profile.default.json $MYWORLD/webdash-profile.json
+
     #
     # Generates a file to initialize a user's shell with
     #
