@@ -13,18 +13,5 @@
         "$.rootDir()/app-persistent/bin",
         "$.rootDir()/app-persistent/bin/_webdash"
     ],
-    "pull-projects": [
-        {
-            "source": "git@github.com:Amtrix/src-bin-report-build-state",
-            "destination": "$.rootDir()/src/bin/report-build-state",
-            "exec": ":all",
-            "register": true
-        },
-        {
-            "source": "git@github.com:Amtrix/src-bin-report-repo-state",
-            "destination": "$.rootDir()/src/bin/report-repo-state",
-            "exec": ":all",
-            "register": true
-        }
-    ]
+    "pull-projects": []
 }
