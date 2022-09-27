@@ -136,5 +136,5 @@ A service running in the background. Still in development. Goal is to enable sch
 https://github.com/Amtrix/src-bin-_webdash-server
 
 #### WebDash Executor
-Common libraries used by the server and client. The heart of WebDash.
+Common libraries used by the server and client. The heart of WebDash.<br>
 https://github.com/Amtrix/src-lib-webdash-executor
