@@ -14,12 +14,6 @@ func_localize() {
     declare -a git_urls=()
     declare -a git_destination=()
 
-    git_urls+=(git@github.com:Amtrix/src-lib-webdash-executor)
-    git_paths+=($webdash_lib_dir)
-
-    git_urls+=(git@github.com:Amtrix/src-bin-_webdash-client)
-    git_paths+=($webdash_client_dir)
-
     git_urls+=(git@github.com:Amtrix/src-bin-_webdash-server.git)
     git_paths+=($MYWORLD/src/bin/_webdash-server)
 
