@@ -26,7 +26,7 @@ WebDash introduces features to automate workflows in your shell usage. In partic
     </ul>
 </ul>
 
-<h1>Setup</h1>
+<h2>Setup</h2>
 <h2>Required Packages</h2>
 The following bash commands install all tools that are neded for this project. Go line-by-line and read comments prefixed by '#' to understand the changes to your system.
 
@@ -48,12 +48,12 @@ sudo apt-get install gcc-9
 sudo ln -sf g++-9 /usr/bin/g++
 </pre></code>
 
-<h2>Run the Setup Script</h2>
+<h3>Run the Setup Script</h3>
 Call the script <code>./data/setup-webdash.sh</code> to initialize everything. It will use your <code>git</code> client to clone additionally required projects.
 
 <br/>
 
-<h1>Enforced Environment</h1>
+<h2>Enforced Environment</h2>
 A special directory hierarchy is enforced by WebDash.
 
 <br/>
@@ -81,7 +81,7 @@ webdash.terminal.init.sh
 
 This is your new development environment.
 
-<h2><code>webdash-profile.json</code></h3>
+<h2>webdash-profile.json</h2>
 Located in the top-level directory after setup is completed. Defines all global behavior.
 
 <br/>
@@ -125,7 +125,7 @@ Meaning of all fields:
 
 <br/>
 
-<h1>Cloned Dependencies</h1>
+<h2>Cloned Dependencies</h2>
 WebDash's setup <span style="color:red">WILL/NEEDS</span> to clone to following projects into <code>src/bin</code>.
 
 <br/>
