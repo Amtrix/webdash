@@ -128,7 +128,7 @@ Meaning of all fields:
 <br/>
 
 <h2>Cloned Dependencies</h2>
-WebDash's setup <span style="color:red">WILL/NEEDS</span> to clone to following projects into <code>src/bin</code>.
+WebDash's setup <span style="color:red">WILL and NEEDS</span> to clone the following projects into <code>src/bin</code>.
 
 <br/>
 
