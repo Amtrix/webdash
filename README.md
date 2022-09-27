@@ -1,7 +1,8 @@
 <h1>$${\color{gold}WebDash}$$</h1>
 WebDash introduces features to automate workflows in your shell usage. In particular, it was created to introduce a consistent framework in how you handle your programing projects.
 
-<br>
+&nbsp;<br>
+
 <b>Problems is attempts to solve:</b>
 <ul>
     <li>Human laziness.</li>
