@@ -1,27 +1,62 @@
-<h1>WebDash: Another Multi-Purpose Build Tool</h1>
+WebDash introduces features to automate workflows in your shell usage. In particular, it was created to introduce a consistent framework in how you handle your programing projects.
 
-Note: Current setup only validated for Ubuntu 18.04 LTS.
-<h2>What it does?</h2>
-A plugin based system to etend one's development tools. Simplifies a mutltitude of tasks.
+<br>
+<b>Problems is attempts to solve:</b>
 <ul>
-  <li>Automated script execution</li>
-  <li>Dependency resolution</li>
-  <li>Command aliases</li>
-  <li>Output piping and analysis</li>
-  <li>Notifier system</li>
-  <li>Centralized logging</li>
-  <li>Development environment setup and automation</li>
+    <li>Human laziness.</li>
+    <ul>
+        <li>You could write scripts for many of these features. However, that's tedious effort and often not done due to that; especially for smaller projects/workflows.
+    </ul>
+    <li>Consistent aliasing of frequently used commands.</li>
+    <ul>
+        <li>You can introduce <code>webdash build</code> to build each of your projects (instead of different commands with different arguments).
+        </li>
+    </ul>
+    <li>Invoking dependencies.</li>
+    <ul>
+        <li> When calling a custom command such as <code>webdash build</code>, you can tell WebDash to also build certain depndencies.
+    </ul>
+    <li> A consistent environment for projects.</li>
+    <ul>
+        <li>Code of binaries goes to <code>src/bin</code>, code of libraries goes to <code>src/lib</code>, binaries go to <code>app-persistent/</code>, logs to  <code>app-temporary/</code>, etc.
+    </ul>
+    <li>Directory-relative references</li>
+    <ul>
+        <li>You can use <code>$.rootDir()/src/projectA</code> to reference <code>projectA</code> when building some <code>projectB</code> using WebDash.
+    </ul>
 </ul>
 
-My goal was to create my own flexible development environment that would be extensible, supervise the health of all my projects, and remove the ramp up barriers to initiate coding.
+<h1>Setup</h1>
+<h2>Required Packages</h2>
+The following bash commands install all tools that are neded for this project. Go line-by-line and read comments prefixed by '#' to understand the changes to your system.
 
-<h2>How does it work?</h2>
-<p>To initialize everything, call <code>data/setup-webdash.sh</code>. This will create the directory structure (A) and translate the <code>/definitions.json</code> file (B) into a callabe script <code>webdash.terminal.init.sh</code>. Call <code>webdash.terminal.init.sh</code> to perform the required initialization for a terminal instance.</p>
+<br/>
 
-<p>The script also deploys three other projects to extend its functionality: <i>WebDash Client</i>, <i>WebDash Server</i>, <i>Report Build State</i>, <i>Report Repo State</i>.</p>
+<pre><code># Includes newer tools.
+sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+sudo apt-get update
 
-<h3>(A) Enforced directory structure</h3>
-<p>Executing data/setup-webdash.sh creates the following directory structure:</p>
+sudo apt-get install git
+sudo apt-get install cmake
+sudo apt-get install make
+sudo apt-get install libboost-dev
+sudo apt-get install libboost-all-dev
+
+# Perform ONLY if your g++ version is below g++-9.
+sudo apt-get install g++-9
+sudo apt-get install gcc-9
+sudo ln -sf g++-9 /usr/bin/g++
+</pre></code>
+
+<h2>Run the Setup Script</h2>
+Call the script <code>./data/setup-webdash.sh</code> to initialize everything. It will use your <code>git</code> client to clone additionally required projects.
+
+<br/>
+
+<h1>Enforced Environment</h1>
+A special directory hierarchy is enforced by WebDash.
+
+<br/>
 
 <pre><code>app-persistent/
     bin/
@@ -39,15 +74,17 @@ src/
             json/
             websocketpp/
         webdash-executer/
-definitions.json
+webdash-profile.json
 .gitignore
 webdash.terminal.init.sh
 </pre></code>
 
 This is your new development environment.
 
-<h3>(B) /definitions.json</h3>
-Stores global environment information. Example of the provided config file follows.
+<h2><code>webdash-profile.json</code></h3>
+Located in the top-level directory after setup is completed. Defines all global behavior.
+
+<br/>
 
 <pre><code>{
     "myworld": {
@@ -65,30 +102,38 @@ Stores global environment information. Example of the provided config file follo
             "destination": "$.rootDir()/src/bin/report-build-state",
             "exec": ":all",
             "register": true
-        },
-        {
-            "source": "https://github.com/Amtrix/src-bin-report-repo-state",
-            "destination": "$.rootDir()/src/bin/report-repo-state",
-            "exec": ":all",
-            "register": true
         }
     ]
 }
 </pre></code>
 
+<b>Note: Entry in pull-projects is listed as an example.</b>
+
+Meaning of all fields:
 <ul>
-    <li><code>myworld.rootDir = this</code> - used by webdash to identify the root directory. Only a single definitions.json with such entry should exist.</li>
-    <li><code>env.VAR</code> - adds environment variable VAR.</li>
-    <li><code>path-add</code> - adds listed paths to PATH.</li>
-    <li><code>pull-projects</code> - pulls listed projects when ./data/setup-webdash.sh is called.</li>
-    <li><code>pull-projects.ENTRY.exec</code> - calls the specified entry within the project's webdash.config.json file after the cloning.</li>
+    <li><code>myworld.rootDir = this</code></li>
+    <ul><li>Used by webdash to identify the root directory. Only a single definitions.json with such entry should exist.</li></ul>
+    <li><code>env.VAR</code></li>
+    <ul><li>adds environment variable VAR.</li></ul>
+    <li><code>path-add</code></li>
+    <ul><li>adds listed paths to PATH.</li></ul>
+    <li><code>pull-projects</code></li>
+    <ul><li>pulls listed projects when ./data/setup-webdash.sh is called.</li></ul>
+    <li><code>pull-projects.ENTRY.exec</code></li>
+    <ul><li>calls the specified entry within the project's webdash.config.json file after the cloning.</li></ul>
 </ul>
+
+<br/>
+
+<h1>Cloned Dependencies</h1>
+WebDash's setup <span style="color:red">WILL/NEEDS</span> to clone to following projects into <code>src/bin</code>.
+
+<br/>
 
 <h3>WebDash Client</h3>
 A client application that is able to parse user-created webdash.config.json files.
+
+<br/>
+
 <h3>WebDash Server</h3>
-A service running in the background that performs scheduled execution.
-<h3>Report Build State</h3>
-Able to analyze the output of an executable and report if errors were found in the output. 
-<h3>Report Repo State</h3>
-Analyzes the current directory for uncomitted git changes.
+A service running in the background. Still in development. Goal is to enable scheduled executions and other similar features.
