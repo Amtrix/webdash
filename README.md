@@ -1,9 +1,7 @@
 <h1>$${\color{gold}WebDash}$$</h1>
 WebDash introduces features to automate workflows in your shell usage. In particular, it was created to introduce a consistent framework in how you handle your programing projects.
 
-&nbsp;<br>
-
-<b>Problems is attempts to solve:</b>
+## Problems WebDash Attempts to Solve
 <ul>
     <li>Human laziness.</li>
     <ul>
@@ -125,17 +123,18 @@ Meaning of all fields:
     <ul><li>calls the specified entry within the project's webdash.config.json file after the cloning.</li></ul>
 </ul>
 
-<br/>
 
-<h2>Cloned Dependencies</h2>
+## Cloned Dependencies
 WebDash's setup <span style="color:red">WILL and NEEDS</span> to clone the following projects into <code>src/bin</code>.
 
-<br/>
+#### WebDash Client
+A client application that is able to parse user-created webdash.config.json files.<br>
+https://github.com/Amtrix/src-bin-_webdash-client
 
-<h3>WebDash Client</h3>
-A client application that is able to parse user-created webdash.config.json files.
+#### WebDash Server
+A service running in the background. Still in development. Goal is to enable scheduled executions and other similar features.<br>
+https://github.com/Amtrix/src-bin-_webdash-server
 
-<br/>
-
-<h3>WebDash Server</h3>
-A service running in the background. Still in development. Goal is to enable scheduled executions and other similar features.
+#### WebDash Executor
+Common libraries used by the server and client. The heart of WebDash.
+https://github.com/Amtrix/src-lib-webdash-executor
