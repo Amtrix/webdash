@@ -1,0 +1,19 @@
+{
+    "commands": [
+        {
+            "name": "build",
+            "action": "make -C build",
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "report-build-state",
+            "action": "report-build-state build"
+        },
+        {
+            "name": "all",
+            "dependencies": [
+                ":build"
+            ]
+        }
+    ]
+}
