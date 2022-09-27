@@ -104,6 +104,9 @@ func_localize() {
     sudo apt-get install libboost-all-dev -qq > /dev/null
     printf '\e[1;33m%-6s\e[m\n' "Installing packages... 100%"
 
+    # Remove cached sudo. Peace of mind for user.
+    sudo -k
+
     printf '\e[1;33m%-6s\e[m\n' "Building WebDash executer."
     cd "$webdash_lib_dir"
     mkdir -p build
