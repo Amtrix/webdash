@@ -1,5 +1,11 @@
 /*
-!/src/bin/_webdash-client/**/*
+!/src/
+/src/*
+!/src/bin/
+/src/bin/*
+!/src/bin/_webdash-client/*
+
+!/src/bin/_webdash-client/webdash.config.json
 !/data/setup-webdash.sh
 !/data/WebDash.xml
 !/.gitignore
