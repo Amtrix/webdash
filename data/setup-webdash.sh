@@ -9,12 +9,12 @@ func_localize() {
     printf '\e[1;33m%-6s\e[m\n' "Warning: This setup will erase and re-clone all directories listed in %MYWORLD%/webdash-profile.json"
     echo ""
 
-    local webdash_lib_dir=$MYWORLD/src/lib/webdash-executer
+    local webdash_lib_dir=$MYWORLD/src/lib/webdash-executor
     local webdash_client_dir=$MYWORLD/src/bin/_webdash-client
     declare -a git_urls=()
     declare -a git_destination=()
 
-    git_urls+=(git@github.com:Amtrix/src-lib-webdash-executer)
+    git_urls+=(git@github.com:Amtrix/src-lib-webdash-executor)
     git_paths+=($webdash_lib_dir)
 
     git_urls+=(git@github.com:Amtrix/src-bin-_webdash-client)
@@ -82,7 +82,7 @@ func_localize() {
         git clone "$git_url" .
     done
 
-    printf '\e[1;33m%-6s\e[m\n' "Building WebDash executer."
+    printf '\e[1;33m%-6s\e[m\n' "Building WebDash executor."
     cd "$webdash_lib_dir"
     mkdir -p build
     cd build

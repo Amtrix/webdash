@@ -73,7 +73,7 @@ src/
         external/
             json/
             websocketpp/
-        webdash-executer/
+        webdash-executor/
 webdash-profile.json
 .gitignore
 webdash.terminal.init.sh
