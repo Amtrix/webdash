@@ -6,7 +6,7 @@ export MYWORLD="$rootdir"
 export PATH="$MYWORLD/app-persistent/bin/:$PATH"
 
 func_localize() {
-    printf '\e[1;33m%-6s\e[m\n' "Warning: This setup will erase and re-clone all directories listed in %MYWORLD%/definitions.json"
+    printf '\e[1;33m%-6s\e[m\n' "Warning: This setup will erase and re-clone all directories listed in %MYWORLD%/webdash-profile.json"
     echo ""
 
     local webdash_lib_dir=$MYWORLD/src/lib/webdash-executer
@@ -139,7 +139,7 @@ func_localize() {
     printf '\e[1;33m%-6s\e[m\n' "Installing and Starting WebDash Server."
     webdash $MYWORLD/src/bin/_webdash-server:all || { exit 1; }
 
-    printf '\e[1;33m%-6s\e[m\n' "Clone, call :all, and register projects from definitions.json."
+    printf '\e[1;33m%-6s\e[m\n' "Clone, call :all, and register projects from webdash-profile.json."
     $MYWORLD/./app-persistent/bin/webdash _internal_:create-project-cloner # || { exit 1; }
     $MYWORLD/./app-persistent/data/webdash-client/initialize-projects.sh # || { exit 1; }
 
