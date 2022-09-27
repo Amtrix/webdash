@@ -1,4 +1,5 @@
 /*
+!/src/bin/_webdash-client/**/*
 !/data/setup-webdash.sh
 !/data/WebDash.xml
 !/.gitignore
