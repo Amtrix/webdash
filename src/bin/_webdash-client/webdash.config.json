@@ -1,19 +1,51 @@
 {
     "commands": [
         {
-            "name": "build",
-            "action": "make -C build",
+            "name": "install",
+            "action": "bash install.sh",
             "wdir": "$.thisDir()"
         },
         {
-            "name": "report-build-state",
-            "action": "report-build-state build"
+            "name": "build",
+            "actions": [
+                "rm -f build/webdash",
+                "make -C build"
+            ],
+            "dependencies": [
+                "./src/lib/webdash-executor/webdash.config.json:build"
+            ],
+            "wdir": "$.thisDir()"
         },
         {
             "name": "all",
             "dependencies": [
-                ":build"
-            ]
+                ":build",
+                ":install"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "report-build-state",
+            "actions": [
+                "report-build-state build"
+            ],
+            "frequency": "daily",
+            "when": "new-day",
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "git-status",
+            "action": "git status",
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "report-repo-state",
+            "actions": [
+                "report-repo-state git-status"
+            ],
+            "frequency": "daily",
+            "when": "new-day",
+            "wdir": "$.thisDir()"
         }
     ]
 }

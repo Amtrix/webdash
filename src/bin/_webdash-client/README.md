@@ -1,12 +1,32 @@
-# WebDash Executor
-Library used by binaries that wish to make use of the WebDash directory infrastructure, which is a hierarchical composition of directories with the ability to make use of WebDash configuration files (e.g., `webdash.config.json`). These configuration files enable various unique concepts, such as
-- Directory-local environment variables.
-- Use of "WebDash commands".
-    - Introduced to remove the need of memorizing `bash` commands.
-    - These wrap the execution of `bash`-native commands alongside their arguments. In a sense, introducing powerful command aliases.
-        - Dependencies to other commands can be specified. E.g., build a library before building a binary that depends on it.
-   - Given the name of command, WebDash can smartly identify a "best match" configuration file, with the ability to traverse through the ancestry of a directory.
-   - With ease, allows the user to specify the `CWD` in which to run the command, including relative to where the `webdash.config.json` file is located.
+<h1>WebDash Client</h1>
 
-## Note
-- Style of CPP comments: https://developer.lsst.io/cpp/api-docs.html#cpp-doxygen-short-summary
+<h2>How to use</h2>
+<h3>Examples:</h3>
+<ul>
+  <li><code>webdash build</code></li>
+  <li><code>webdash $#.build // to use definitions from /definitions.json</code></li>
+  <li><code>webdash -register // to register the current directory to the server</code></li>
+  <li><code>webdash -list // to list the available commands from the current directory</code></li>
+  <li><code>webdash -list-config // to list <it>all</it> registered configs</code></li>
+</ul>
+
+<h3>How to design webdash.config.json</h3>
+<pre><code>{
+    "commands": [
+      {
+          "name": "required-identifier" // required.
+          "action": "&lt;executable_name&gt; &lt;arguments&gt;"
+          "actions": [
+              "&lt;executable_name1&gt; &lt;arguments1&gt;"
+              ...
+              "&lt;executable_nameN&gt; &lt;argumentsN&gt;"
+          ],
+          "frequency": "daily",
+          "when": "new-day",
+          "wdir": "$.thisDir()",    
+          "notify-dashboard": true // adds entry to notifications log output when run.
+      }
+    ]
+}</code></pre>
+
+<h3>Log output: <code>/app-temporary/logging/_webdash-client</code></h3>
