@@ -122,19 +122,3 @@ Meaning of all fields:
     <li><code>pull-projects.ENTRY.exec</code></li>
     <ul><li>calls the specified entry within the project's webdash.config.json file after the cloning.</li></ul>
 </ul>
-
-
-## Cloned Dependencies
-WebDash's setup <span style="color:red">WILL and NEEDS</span> to clone the following projects into <code>src/bin</code>.
-
-#### WebDash Client
-A client application that is able to parse user-created webdash.config.json files.<br>
-https://github.com/Amtrix/src-bin-_webdash-client
-
-#### WebDash Server
-A service running in the background. Still in development. Goal is to enable scheduled executions and other similar features.<br>
-https://github.com/Amtrix/src-bin-_webdash-server
-
-#### WebDash Executor
-Common library used by WebDash's server and client. The heart of WebDash.<br>
-https://github.com/Amtrix/src-lib-webdash-executor
