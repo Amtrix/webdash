@@ -4,11 +4,11 @@
 
 !/src/bin/
 /src/bin/*
-!/src/bin/_webdash-client/*
+!/src/bin/_webdash-client/
 
 !/src/lib/
 /src/lib/*
-!/src/lib/webdash-executor/*
+!/src/lib/webdash-executor/
 
 !/src/bin/_webdash-client/webdash.config.json
 !/data/setup-webdash.sh
