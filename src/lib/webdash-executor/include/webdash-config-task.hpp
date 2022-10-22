@@ -17,7 +17,7 @@ using namespace std::chrono;
  */
 class WebDashConfigTask {
     public:
-        WebDashConfigTask(WebDashConfig*, string, json);
+        WebDashConfigTask(WebDashConfig*, const string, json);
 
         bool ShouldExecuteTimewise(WebDashType::RunConfig config);
 

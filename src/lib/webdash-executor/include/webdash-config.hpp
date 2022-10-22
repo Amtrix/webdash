@@ -11,64 +11,108 @@ using namespace std;
 using json = nlohmann::json;
 using ConfigAndCommand = pair<WebDashConfig, string>;
 
+
+/**
+ * @class In memory representation of a (on-disk stored) WebDash config file.
+ */
 class WebDashConfig
 {
 public:
 
-    enum class LoadFailureReason
-    {
-        NoError,
-        FileNotFound
-    };
-
+    /**
+     * @brief Loads the given JSON file into a new WebDashConfig object.
+     * @param config_filepath The path to the JSON config file.
+     **/
     WebDashConfig(const std::filesystem::path config_filepath);
 
-    /**
-     * Runs a single task with name {cmdName} or all if none provided or "" is
-     * provided.
-     */
-    std::vector<WebDashType::RunReturn> Run(const string cmdName = "", WebDashType::RunConfig runconfig = {});
 
+    /**
+     * @brief Runs a single task with name @param command_name or all if none
+     *        provided or "" is provided.
+     * @param command_name The name of the command in the WebDash config to run.
+     * @returnsA RunReturn object that stores all the output information of the
+     *         process.
+     */
+    std::vector<WebDashType::RunReturn> Run(const string command_name = "", WebDashType::RunConfig runconfig = {});
+
+
+    /**
+     * @brief Returns all substitutions pairs for the WebDash config, usable for
+     *        any JSON values in config files.
+     * @returnsThe substitutions of pairs.
+     */
     std::vector<std::pair<string,string>> GetProfileConfigSubtitutions() const;
 
+
+    /**
+     * @brief Reload the config file.
+     */
     void Reload();
 
+
+    /**
+     * @brief The file path to the config's JSON.
+     * @returnsThe file path.
+     */
     string GetPath() const;
 
+
+    /**
+     * @brief The loading/reloading of the JSON config may have failed. This
+     *        functions boolean return value reflects that result.
+     * @returnsReturns `true` if the loading succeeded, `false` otherwise.
+     */
     bool LastLodingSucceeded() const { return !_loading_failed; };
 
+
+    /**
+     * @returnsGet the list of task names in the JSON config.
+     */
     vector<string> GetTaskList();
 
-    std::optional<WebDashConfigTask> GetTask(const string cmdname);
+    /**
+     * @returnsReturns a WebDashConfigTask object, given the task's name.
+     */
+    std::optional<WebDashConfigTask> GetTask(const string command_name);
+
 
 private:
 
+    /**
+     *  @brief Returns a hollow object.
+     */
     WebDashConfig() { };
 
+
     /**
-     *  @brief Loads the config. Returns FALSE upon detected failure.
+     *  @brief Loads the config and returns the array of tasks the config defines.
+     *
      *  @param config_filepath The path to the WebDash config file.
-     *  @return All tasks in the config
-     *  @throw WebDashException::ConfigJsonParseError if pasing of the JSON
-     *         failed.
+     *  @returnsAll tasks in the config.
+     *  @throw WebDashException::ConfigJsonParseError if pasing of the JSON failed.
      */
     vector<WebDashConfigTask> Load(const std::filesystem::path config_filepath);
 
-    optional<vector<WebDashConfigTask>> LoadAndCheckKnownFailures(const std::filesystem::path path);
 
+    /**
+     *  @brief Loads the config and catches a set of JSON parsing exceptions for which it returns @retval nullopt.
+     *
+     *  @param config_filepath The path to the WebDash config file.
+     *  @returnsAll tasks in the config or @retval nullopt if the config is an invalid JSON file.
+     */
+    optional<vector<WebDashConfigTask>> LoadAndCheckKnownFailures(const std::filesystem::path& config_filepath);
+
+
+    // The array of tasks in the config.
     vector<WebDashConfigTask> _tasks;
 
     // The path to the location of the config file.
-    std::filesystem::path _path;
+    std::filesystem::path _config_filepath;
 
-    // If the loading failed, MAY contain the reason for the failure.
-    LoadFailureReason load_failure_reason;
-
-    // If TRUE, then the loading of the config at the given path has failed.
-    // This is most often due to the webdash config JSON being badly
-    // formatted.
+    // If TRUE, then the loading of the config at the given path has failed (e.g., malformed JSON).
     bool _loading_failed;
 };
+
 
 
 /**

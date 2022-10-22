@@ -65,21 +65,21 @@ class WebDashCore {
         /**
          *  @brief Returns keyword aliasing for any WebDash related config parsing, including substitutions for the
          *         WebDash Profile JSON (kRootProfileFilename) itself.
-         *  @return List of substitutions.
+         *  @returnsList of substitutions.
          */
         vector<SubstitutionPair> GetPrimaryKeywordSubstitutions() const;
 
 
         /**
          *  @brief Returns a list of all key-chain-to-value pairs from WebDash's Profile JSON file.
-         *  @return List of all JSON value entries from the Profile file.
+         *  @returnsList of all JSON value entries from the Profile file.
          */
         const vector<WebDashUtils::JsonEntry>& GetKeyValuesFromRootProfile() const;
 
 
         /**
          *  @brief Returns the root directory, which holds WebDash's Profile file.
-         *  @return The WebDash root directory.
+         *  @returnsThe WebDash root directory.
          */
         const filesystem::path& GetWebDashRootDirectory() const;
 
@@ -87,7 +87,7 @@ class WebDashCore {
         /**
          *  @brief For the project that includes this library, it will return the project-specific directory for
          *         PERSISTENT file storage.
-         *  @return Project's persistent file storage.
+         *  @returnsProject's persistent file storage.
          */
         std::filesystem::path GetPersistenteAppStoragePath() const;
 
@@ -137,21 +137,21 @@ class WebDashCore {
 
         /**
          *  @brief Returns a list of entries to add to PATH (as parsed by the JSON profile under the "path-add" key).
-         *  @return List of entries to add to the PATH variable.
+         *  @returnsList of entries to add to the PATH variable.
          */
         vector<string> GetEnvPathAdditions();
 
 
         /**
          *  @brief Returns a list of environment variables to add (as parsed by the JSON profile under the "env" key).
-         *  @return List of environment variables to add.
+         *  @returnsList of environment variables to add.
          */
         vector<SubstitutionPair> GetEnvironmentAdditions();
 
 
         /**
          *  @brief Returns a list of Git projects that are stored in the WebDash profile.
-         *  @return List containing metadata of GitHub projects, as given in the profile.
+         *  @returnsList containing metadata of GitHub projects, as given in the profile.
          */
         vector<WebDashType::GitProjectMetadata> GetExternalGitProjects();
 
@@ -162,7 +162,7 @@ class WebDashCore {
         /**
          *  @brief Return path of logging directory. Creates the directory if it does not exist. Directory:
          *         _GetAndCreateLogDirectory()/app-temporary/logging/_WEBDASH_PROJECT_NAME_
-         *  @return List containing metadata of GitHub projects, as given in the profile.
+         *  @returnsList containing metadata of GitHub projects, as given in the profile.
          */
         filesystem::path _GetAndCreateLogDirectory();
 
@@ -213,7 +213,7 @@ class WebDashCore {
 
 /**
  *  @brief Shortcut to retrieve the WebDashCore singleton.
- *  @return The singleton.
+ *  @returnsThe singleton.
  */
 WebDashCore& WebDash();
 

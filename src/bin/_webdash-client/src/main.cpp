@@ -93,9 +93,6 @@ bool IsInternalCommand(const string command) {
 }
 
 
-
-
-
 /**
  * @brief Command: `webdash list-config`.
  * @param arguments The (command line) arguments.

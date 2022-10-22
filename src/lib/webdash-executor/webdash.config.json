@@ -1,6 +1,21 @@
 {
     "commands": [
         {
+            "name": "cmake-init",
+            "actions": [
+                "mkdir -p build/",
+                ":cmake-init-internal"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "cmake-init-internal",
+            "actions": [
+                "cmake ../"
+            ],
+            "wdir": "$.thisDir()/build"
+        },
+        {
             "name": "build",
             "action": "make -C build",
             "wdir": "$.thisDir()"
