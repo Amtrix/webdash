@@ -21,10 +21,11 @@ namespace {
 
 
     /**
-     *  @brief Check the environment variables for the key kWebDashRootEnvVarName and return its
-     *         value if it exists. If not, return nullopt.
+     *  @brief Check the environment variables for the key kWebDashRootEnvVarName
+     *         and return its value if it exists. If not, return nullopt.
      *
-     *  @return The value of the environment variable with name kWebDashRootEnvVarName.
+     *  @returnsThe value of the environment variable with name
+     *          kWebDashRootEnvVarName.
     **/
     std::optional<string> TryGetRootUsingEnvironmentVariable() {
         std::optional<string> myworld_path = nullopt;
@@ -330,7 +331,7 @@ void WebDashCore::Log(const WebDashType::LogType type,
     const bool already_exists =
         std::filesystem::exists(full_log_file_path.c_str());
 
-    const bool clear_previous_content =  !_logfile_was_cleared[type] && !keep_version_from_previous_execution;
+    const bool clear_previous_content = !_logfile_was_cleared[type] && !keep_version_from_previous_execution;
 
     // Check if the file needs be created or cleaned up (remove previous content due to cold boot of the program).
     if (!already_exists || clear_previous_content) {
@@ -362,7 +363,10 @@ vector<string> WebDashCore::GetEnvPathAdditions() {
             continue;
         }
 
-        const string value = WebDashUtils::ApplySubstitutions(json_entry.GetValue(), GetPrimaryKeywordSubstitutions());
+        const string value = WebDashUtils::ApplySubstitutions(
+            json_entry.GetValue(),
+            GetPrimaryKeywordSubstitutions());
+
         ret.push_back(value);
     }
 

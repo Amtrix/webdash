@@ -53,8 +53,8 @@ namespace {
 WebDashConfig::WebDashConfig(const std::filesystem::path config_filepath) {
     auto canonical_config_filepath = std::filesystem::canonical(config_filepath);
 
-    const auto& previous_config_filepath = _path;
-    _path = canonical_config_filepath;
+    const auto& previous_config_filepath = _config_filepath;
+    _config_filepath = canonical_config_filepath;
 
     auto computed_tasks = LoadAndCheckKnownFailures(canonical_config_filepath);
 
@@ -63,17 +63,19 @@ WebDashConfig::WebDashConfig(const std::filesystem::path config_filepath) {
         _tasks = computed_tasks.value();
     } else {
         _loading_failed = true;
-        _path = previous_config_filepath;
+        _config_filepath = previous_config_filepath;
     }
 }
 
 
-std::optional<vector<WebDashConfigTask>> WebDashConfig::LoadAndCheckKnownFailures(const std::filesystem::path path) {
+std::optional<vector<WebDashConfigTask>> WebDashConfig::LoadAndCheckKnownFailures(
+    const std::filesystem::path& config_filepath)
+{
     try {
-        return Load(path);
+        return Load(config_filepath);
     }
     catch (const WebDashException::ConfigJsonParseError& e) {
-        WebDash().Log(WebDashType::LogType::DEBUG, "Not a valid WebDash config file: " + path.string() + ". Reason: " + e.what());
+        WebDash().Log(WebDashType::LogType::DEBUG, "Not a valid WebDash config file: " + config_filepath.string() + ". Reason: " + e.what());
         return nullopt;
     }
 
@@ -82,7 +84,6 @@ std::optional<vector<WebDashConfigTask>> WebDashConfig::LoadAndCheckKnownFailure
 
 
 vector<WebDashConfigTask> WebDashConfig::Load(const std::filesystem::path config_filepath) {
-    load_failure_reason = LoadFailureReason::NoError;
     vector<WebDashConfigTask> tasks;
 
     ifstream configStream;
@@ -90,7 +91,6 @@ vector<WebDashConfigTask> WebDashConfig::Load(const std::filesystem::path config
         configStream.open(config_filepath.c_str(), ifstream::in);
     }
     catch (...) {
-        load_failure_reason = LoadFailureReason::FileNotFound;
         throw WebDashException::ConfigJsonParseError("Failed to open the config file.");
     }
 
@@ -128,7 +128,7 @@ vector<WebDashConfigTask> WebDashConfig::Load(const std::filesystem::path config
 
 
 string WebDashConfig::GetPath() const {
-    return _path;
+    return _config_filepath;
 }
 
 
@@ -146,14 +146,14 @@ vector<SubstitutionPair> WebDashConfig::GetProfileConfigSubtitutions() const {
     config_substitutions.insert(config_substitutions.end(), primary_substitutions.begin(), primary_substitutions.end());
 
     // Substitutions specific to this config file.
-    config_substitutions.push_back(make_pair("$.thisDir()", WebDashUtils::GetDirectoryOfFilepath(_path)));
+    config_substitutions.push_back(make_pair("$.thisDir()", WebDashUtils::GetDirectoryOfFilepath(_config_filepath)));
 
     return config_substitutions;
 }
 
 
 void WebDashConfig::Reload() {
-    auto computed_tasks = LoadAndCheckKnownFailures(_path);
+    auto computed_tasks = LoadAndCheckKnownFailures(_config_filepath);
 
     if (computed_tasks) {
         _loading_failed = false;
@@ -175,11 +175,11 @@ vector<string> WebDashConfig::GetTaskList() {
 }
 
 
-std::optional<WebDashConfigTask> WebDashConfig::GetTask(const string cmdname) {
+std::optional<WebDashConfigTask> WebDashConfig::GetTask(const string command_name) {
     for (auto task : _tasks) {
-        if (task.GetName() == cmdname) {
+        if (task.GetName() == command_name) {
             return task;
-        } else if (cmdname == "" && task.GetName() == "all") {
+        } else if (command_name == "" && task.GetName() == "all") {
             return task;
         }
     }

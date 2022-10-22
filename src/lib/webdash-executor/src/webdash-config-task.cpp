@@ -15,7 +15,7 @@ using namespace std;
 
 
 WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
-                                     string taskid,
+                                     const string taskid,
                                      json task_config)
 {
     WebDash().Log(WebDashType::LogType::DEBUG, "Loading Task: " + taskid);
