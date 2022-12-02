@@ -12,13 +12,28 @@ class WebDashConfig;
 using json = nlohmann::json;
 using namespace std::chrono;
 
+
 /**
- * @class Representative of a single webdash task that's from within a config file.
+ * @class Representative of a single webdash task from within a config file.
  */
 class WebDashConfigTask {
     public:
+
+        /**
+         * @returns A WebDash config task.
+         */
         WebDashConfigTask(WebDashConfig*, const string, json);
 
+
+        /**
+         * @brief If the task has a scheduled execution AND enough time has
+         * passed for next execution, returns `true`. Otherwise, returns
+         * `false`.
+         *
+         * @param config The task's execution parameters.
+         * @returns true if a there are no time properties blocking the
+         *          execution of the task, false otherwise.
+         */
         bool ShouldExecuteTimewise(WebDashType::RunConfig config);
 
         WebDashType::RunReturn Run(WebDashType::RunConfig config, std::string action);
