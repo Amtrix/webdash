@@ -225,16 +225,23 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
 
     const pid_t pid = fork();
     if (pid == 0) {
+
+        /**
+         * Change the CWD if required by the task.
+         */
+
         if (_wdir.has_value()) {
             if (chdir(_wdir.value().c_str()) != 0) {
-                perror ("WebDashConfigTask::Run!chdir");
+                perror ("WebDashConfigTask::Run!chdir: Specified work directory does not exist?");
                 WebDash().Log(WebDashType::LogType::ERR, "Failed to set cwd to: " + _wdir.value());
                 exit(1);
             }
+
             WebDash().Log(WebDashType::LogType::DEBUG, "Working directory set to: " + _wdir.value());
         }
 
         std::istringstream iss(action.c_str());
+
         std::vector<std::string> execParts(std::istream_iterator<std::string>{iss},
                                            std::istream_iterator<std::string>());
 
@@ -273,8 +280,8 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
         }
 
         exit(1);
-    }
-    else if (pid > 0) {
+
+    } else if (pid > 0) {
         close(filedes[1]);
 
         // parent
