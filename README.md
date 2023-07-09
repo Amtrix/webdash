@@ -1,12 +1,7 @@
 <h1>WebDash</h1>
-WebDash introduces features to automate workflows in your shell usage. In particular, it was created to introduce a consistent framework in how you handle your programing projects.
+Introduces a unique way of aliasing commands while working with bash. Adds some extra abilities:
 
-## Problems WebDash Attempts to Solve
 <ul>
-    <li>Human laziness.</li>
-    <ul>
-        <li>You could write scripts for many of these features. However, that's tedious effort and often not done due to that; especially for smaller projects/workflows.
-    </ul>
     <li>Consistent aliasing of frequently used commands.</li>
     <ul>
         <li>You can introduce <code>webdash build</code> to build each of your projects (instead of different commands with different arguments).
