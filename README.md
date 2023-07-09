@@ -2,22 +2,11 @@
 Introduces a unique way of aliasing commands while working with bash. Adds some extra abilities:
 
 <ul>
-    <li>Consistent aliasing of frequently used commands.</li>
-    <ul>
-        <li>You can introduce <code>webdash build</code> to build each of your projects (instead of different commands with different arguments).
-        </li>
-    </ul>
-    <li>Invoking dependencies.</li>
-    <ul>
-        <li> When calling a custom command such as <code>webdash build</code>, you can tell WebDash to also build certain depndencies.
-    </ul>
+    <li>Invokes dependencies.</li>
     <li> A consistent environment for projects.</li>
-    <ul>
-        <li>Code of binaries goes to <code>src/bin</code>, code of libraries goes to <code>src/lib</code>, binaries go to <code>app-persistent/</code>, logs to  <code>app-temporary/</code>, etc.
-    </ul>
     <li>Directory-relative references</li>
     <ul>
-        <li>You can use <code>$.rootDir()/src/projectA</code> to reference <code>projectA</code> when building some <code>projectB</code> using WebDash.
+        <li>You can use <code>$.rootDir()/src/projectA</code> to reference <code>projectA</code> when building some <code>projectB</code>.
     </ul>
 </ul>
 
