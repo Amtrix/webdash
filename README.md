@@ -11,10 +11,7 @@ Introduces a unique way of aliasing commands while working with bash. Adds some 
 </ul>
 
 <h2>Setup</h2>
-<h3>Required Packages</h3>
-The following bash commands install all tools that are neded for this project. Go line-by-line and read comments prefixed by '#' to understand the changes to your system.
-
-&nbsp;<br>
+<h3>Install Dependencies</h3>
 
 <pre><code># Includes newer tools.
 sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
@@ -33,7 +30,7 @@ sudo ln -sf g++-9 /usr/bin/g++
 </pre></code>
 
 <h3>Run the Setup Script</h3>
-Call the script <code>./data/setup-webdash.sh</code> to initialize everything. It will use your <code>git</code> client to clone additionally required projects.
+Call <code>./data/setup-webdash.sh</code> to initialize everything. It will use your <code>git</code> client to clone additionally required projects.
 
 <br/>
 
