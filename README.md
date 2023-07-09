@@ -1,4 +1,4 @@
-<h1>$${\color{gold}WebDash}$$</h1>
+<h1>{\color{gold}WebDash}</h1>
 WebDash introduces features to automate workflows in your shell usage. In particular, it was created to introduce a consistent framework in how you handle your programing projects.
 
 ## Problems WebDash Attempts to Solve
