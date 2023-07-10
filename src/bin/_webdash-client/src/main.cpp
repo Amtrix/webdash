@@ -27,6 +27,8 @@ using json = nlohmann::json;
 const string _WEBDASH_INTERNAL_CMD_PREFIX = "_internal_:";
 const string _WEBDASH_TERMINAL_INIT_FILE_WARNING = "# Warning: This is an automatically generated file by the app-persistent/bin/webdash client. Auto generated. Don't modify.";
 
+constexpr int kSpaceOutCommands = 8;
+constexpr int kSpaceOutGroup = 4;
 
 /**
  * Commands to inject into a bash script to print the state of the WebDash process.
@@ -312,6 +314,32 @@ bool PingServer_Command(const vector<string>& arguments) {
 
 
 /**
+ * @brief Command: `webdash ping-server`.
+ * @param arguments The (command line) arguments.
+ * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
+ */
+bool Help_Command(const vector<string>& arguments) {
+    if (arguments.size() != 1)
+        return false;
+
+    if (arguments[0] != NATIVE_COMMANDS::HELP)
+        return false;
+
+    vector<string> commands = WebDashNativeCommands();
+
+    cout << endl << string(kSpaceOutGroup, ' ') << "WebDash's list of native commands:" << endl;
+
+    for (auto cmd : commands) {
+        if (IsInternalCommand(cmd) == false) {
+            cout << string(kSpaceOutCommands, ' ') << cmd << endl;
+        }
+    }
+
+    return true;
+}
+
+
+/**
  * @brief Lists definitions available in the given config.
  *
  *          `webdash list-definitions`
@@ -414,6 +442,7 @@ void ExecuteUserInput(int argc, char **argv) {
     if (Unregister_Command(arguments)) return;
     if (ReloadAll_Command(arguments)) return;
     if (PingServer_Command(arguments)) return;
+    if (Help_Command(arguments)) return;
 
     /**
      * Check commands that allow ancestry-based config determination.
@@ -428,9 +457,6 @@ void ExecuteUserInput(int argc, char **argv) {
      */
 
     cout << "No matching config/command found! Please select one of the following:" << endl;
-
-    constexpr int kSpaceOutCommands = 8;
-    constexpr int kSpaceOutGroup = 4;
 
     auto configWithCommand = GetConfigAndCommand(arguments);
 
