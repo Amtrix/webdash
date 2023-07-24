@@ -20,7 +20,6 @@ sudo apt-get update
 sudo apt-get install git
 sudo apt-get install cmake
 sudo apt-get install make
-sudo apt-get install libboost-dev
 sudo apt-get install libboost-all-dev
 
 # Perform ONLY if your g++ version is below g++-9.
