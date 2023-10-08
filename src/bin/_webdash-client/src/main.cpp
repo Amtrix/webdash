@@ -169,7 +169,7 @@ bool CreateBuildInitializer_InternalCommand(const vector<string>& arguments) {
 
 
 /**
- * @brief Command: `webdash register`.
+ * @brief Command: `webdash create-project-cloner`.
  * @param arguments The (command line) arguments.
  * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
  */
