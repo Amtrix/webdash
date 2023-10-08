@@ -163,6 +163,20 @@ void WebDashCore::_CalculateRootDirectory() {
     filesystem::path starting_directory = filesystem::current_path();
     filesystem::path current_directory = starting_directory;
 
+    //
+    // There seems to be some weirdness going on when the drive is
+    // network-mounted with vfs. fs::current_path() would return the root (/)
+    // directory. In that case, we fallback to MYWORLD environment variable.
+    //
+
+    char *env_myworld = getenv("MYWORLD");
+
+    if (strlen(env_myworld) > ((string)current_directory).size()) {
+        current_directory = env_myworld;
+    }
+
+    cout << "For finding webdash-profile.json, the search starts with the following directory and goes upwards: " << starting_directory << endl;
+
     std::optional<filesystem::path> next_directory = nullopt;
 
     // Starting with the CWD, go through the whole ancestry chain of directories.
