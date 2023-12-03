@@ -3,10 +3,10 @@ cmake_minimum_required(VERSION 3.10)
 project(webdash-client)
 
 set (EXTERNAL_LIB_PATH "$ENV{MYWORLD}/src/lib/external")
-set (CMAKE_CXX_COMPILER /usr/bin/g++-9)
+set (CMAKE_CXX_COMPILER /usr/bin/g++)
 
 # -rdynamic Keeps symbol names for readable output from the backtrace_symbols() call.
-set (CMAKE_CXX_FLAGS "-std=c++1z -msse4.2 -Wall -Wextra -O3 -g -fopenmp -lstdc++fs -rdynamic")
+set (CMAKE_CXX_FLAGS "-std=c++20 -msse4.2 -Wall -Wextra -O3 -g -fopenmp -lstdc++fs -rdynamic")
 
 
 ###### Include directories
