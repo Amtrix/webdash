@@ -13,18 +13,23 @@ func_localize() {
     local webdash_client_dir=$MYWORLD/src/bin/_webdash-client
     declare -a git_urls=()
     declare -a git_destination=()
+    declare -a git_branch=()
 
     git_urls+=(git@github.com:Amtrix/src-bin-_webdash-server.git)
     git_paths+=($MYWORLD/src/bin/_webdash-server)
+    git_branch+=("")
 
     git_urls+=(git@github.com:Amtrix/src-bin-report-build-state)
     git_paths+=($MYWORLD/src/bin/report-build-state)
+    git_branch+=("")
 
     git_urls+=(git@github.com:nlohmann/json)
     git_paths+=($MYWORLD/src/lib/external/json)
+    git_branch+=("")
 
     git_urls+=(git@github.com:zaphoyd/websocketpp)
     git_paths+=($MYWORLD/src/lib/external/websocketpp)
+    git_branch+=("develop")
 
     mkdir -pv "$MYWORLD/app-temporary"
     mkdir -pv "$MYWORLD/app-persistent/bin"
@@ -36,6 +41,7 @@ func_localize() {
     do
         local git_url=${git_urls[index]}
         local path=${git_paths[index]}
+        local branch=${git_branch[index]}
 
         if [ "$skip_all" = true ];then
             continue
@@ -72,8 +78,16 @@ func_localize() {
         fi
 
         mkdir -pv "$path"
-        cd "$path"
-        git clone "$git_url" .
+        pushd "$path"
+
+        echo "BRANCH: $branch"
+        if [ ! -z "$branch" ]; then
+            echo "CLONE $branch INTO $git_url"
+            git clone -b $branch $git_url .
+        else
+            git clone $git_url .
+        fi
+        popd
     done
 
     printf '\e[1;33m%-6s\e[m\n' "Building WebDash executor."
