@@ -412,15 +412,19 @@ void ExecuteUserInput(int argc, char **argv) {
      */
 
     const auto root_directory = WebDashCore::Get().GetWebDashRootDirectory();
-    cout << "WebDash: Client (root: " << root_directory << ")" << endl;
+    cout << "Root: " << root_directory << "/webdash-profile.json" << endl;
+    cout << "-----------------" << endl;
     cout.flush();
 
-    cout << "> args[" << cmd_argument_count << "] = ";
-    for (size_t i = 0; i < cmd_argument_count; ++i)
-        cout << "\'" << cmd_argument_values[i] << "\' ";
-    cout << endl;
-    cout << "=======================================" << endl;
-    cout.flush();
+    /*
+        // Prints arguments passed in
+        cout << "> args[" << cmd_argument_count << "] = ";
+        for (size_t i = 0; i < cmd_argument_count; ++i)
+            cout << "\'" << cmd_argument_values[i] << "\' ";
+        cout << endl;
+        cout << "=======================================" << endl;
+        cout.flush();
+    */
 
     /**
      * Scope down the arguments to the ones that matter (i.e., exclude the 0-th).
