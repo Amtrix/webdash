@@ -175,7 +175,7 @@ void WebDashCore::_CalculateRootDirectory() {
         current_directory = env_myworld;
     }
 
-    cout << "For finding webdash-profile.json, the search starts with the following directory and goes upwards: " << starting_directory << endl;
+    Log(WebDashType::LogType::DEBUG, "For finding webdash-profile.json, the search starts with the following directory and goes upwards: " + starting_directory.string());
 
     std::optional<filesystem::path> next_directory = nullopt;
 
@@ -319,11 +319,6 @@ void WebDashCore::LoadFromAppStorage(const string& filename,
 void WebDashCore::Log(const WebDashType::LogType type,
                       const std::string msg,
                       const bool keep_version_from_previous_execution) {
-
-    if (!_singleton_instance) {
-        throw WebDashException::General("Can't call WebDashCore::Log before the WebDash root directory is determined.");
-    }
-
     // Stores the current time for timestamping the log entries.
     std::string curr_time = "";
 
@@ -337,10 +332,26 @@ void WebDashCore::Log(const WebDashType::LogType type,
         curr_time = ss.str();
     }
 
-    filesystem::path full_log_file_path = _GetAndCreateLogDirectory();
-    full_log_file_path += "/logging."
-                          + WebDashType::kLogTypeToString.at(type)
-                          + ".txt";
+    filesystem::path full_log_file_path;
+    
+    /*
+     * If webdash.config.json hasn't been determined yet, default to
+     * app-temporary/webdash.LOG/DEBUG/INFO.txt 
+    */
+
+    if (_singleton_instance) {
+        full_log_file_path = _GetAndCreateLogDirectory();
+
+        full_log_file_path += "/logging."
+                              + WebDashType::kLogTypeToString.at(type)
+                              + ".txt";
+    } else {
+        full_log_file_path = getenv("MYWORLD");
+
+        full_log_file_path += "/app-temporary/webdash."
+                              + WebDashType::kLogTypeToString.at(type)
+                              + ".txt";
+    }
 
     const bool already_exists =
         std::filesystem::exists(full_log_file_path.c_str());
