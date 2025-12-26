@@ -1,0 +1,33 @@
+{
+    "name": "webdash",
+    "version": "1.0.0",
+    "description": "Node.js bindings for WebDash framework",
+    "main": "index.js",
+    "scripts": {
+        "build": "node-gyp rebuild",
+        "build:debug": "node-gyp rebuild --debug",
+        "clean": "node-gyp clean",
+        "install": "node-gyp rebuild"
+    },
+    "keywords": [
+        "webdash",
+        "native",
+        "logging"
+    ],
+    "author": "",
+    "license": "MIT",
+    "dependencies": {
+        "node-addon-api": "^7.0.0"
+    },
+    "devDependencies": {
+        "node-gyp": "^10.0.0"
+    },
+    "engines": {
+        "node": ">=16.0.0"
+    },
+    "files": [
+        "index.js",
+        "src/",
+        "binding.gyp"
+    ]
+}

@@ -1,2 +1,7 @@
 build/
 .vscode/
+
+# Node.js bindings
+bindings/node/node_modules/
+bindings/node/build/
+bindings/node/package-lock.json
