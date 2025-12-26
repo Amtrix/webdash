@@ -337,6 +337,11 @@ main() {
 if [[ -f "$WEBDASH/app-persistent/data/webdash-client/$TERMINAL_INIT_FILENAME" ]]; then
     source "$WEBDASH/app-persistent/data/webdash-client/$TERMINAL_INIT_FILENAME"
 fi
+
+# Source bash completion if available
+if [[ -f "$WEBDASH/app-persistent/data/webdash-client/completions/webdash.bash" ]]; then
+    source "$WEBDASH/app-persistent/data/webdash-client/completions/webdash.bash"
+fi
 EOF
 
     log_success "Shell init script created: \$WEBDASH/$TERMINAL_INIT_FILENAME"

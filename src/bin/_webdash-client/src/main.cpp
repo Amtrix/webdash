@@ -353,13 +353,14 @@ bool Help_Command(const vector<string>& arguments) {
 
     for (auto cmd : commands) {
         if (IsInternalCommand(cmd) == false) {
-            cout << string(kSpaceOutCommands, ' ') << cmd << endl;
+            if (cmd == NATIVE_COMMANDS::HELP) {
+                cout << string(kSpaceOutCommands, ' ') << cmd << ", -h" << endl;
+            } else {
+                cout << string(kSpaceOutCommands, ' ') << cmd << endl;
+            }
         }
     }
 
-    cout << endl;
-    cout << "SHORT OPTIONS:" << endl;
-    cout << string(kSpaceOutCommands, ' ') << "-h" << string(12, ' ') << "Show this help" << endl;
     cout << endl;
     cout << "Run 'webdash --list-config' to see all registered project configs." << endl;
 

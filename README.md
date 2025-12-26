@@ -207,8 +207,6 @@ webdash all
 
 ---
 
----
-
 # Appendix
 
 ## Directory Structure
@@ -252,7 +250,16 @@ The root `webdash-profile.json` defines global settings:
             "run": ":all",
             "register": true
         }
-    ]
+    ],
+    "dependencies": [
+        {
+            "path": "$.rootDir()/src/lib/external/json",
+            "git": "git@github.com:nlohmann/json.git"
+        }
+    ],
+    "settings": {
+        "interactive-clone": false
+    }
 }
 ```
 
@@ -261,7 +268,18 @@ The root `webdash-profile.json` defines global settings:
 | `webdash.rootDir` | Marks this as the WebDash root (`"this"`) |
 | `env` | Environment variables to set |
 | `path-add` | Directories to add to `$PATH` |
-| `modules` | External git repositories to manage |
+| `modules` | WebDash projects to auto-clone (have `webdash.config.json`) |
+| `dependencies` | External git repos to clone (libraries, not WebDash projects) |
+| `settings` | Global settings (see below) |
+
+### modules vs dependencies
+
+| | `modules` | `dependencies` |
+|---|-----------|----------------|
+| **Purpose** | WebDash projects with commands | External libraries/dependencies |
+| **Has config** | Yes (`webdash.config.json`) | No |
+| **Auto-clone** | When referenced as dependency | During bootstrap (setup script) |
+| **Example** | Your app's server, tools | nlohmann/json, websocketpp |
 
 ### modules options
 
@@ -272,6 +290,20 @@ The root `webdash-profile.json` defines global settings:
 | `branch` | No | Git branch to checkout (default: repo's default) |
 | `run` | No | Command to run after cloning (e.g., `:build`) |
 | `register` | No | Auto-register the project (`true`/`false`) |
+
+### dependencies options
+
+| Field | Required | Purpose |
+|-------|----------|---------|
+| `path` | Yes | Where to clone the dependency |
+| `git` | Yes | Git repository URL |
+| `branch` | No | Git branch to checkout |
+
+### settings options
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `interactive-clone` | `false` | Prompt before auto-cloning modules |
 
 **Auto-clone behavior:** When a task depends on a path that doesn't exist, WebDash will automatically search `modules` for a matching path and clone it. This enables seamless dependency resolution without manual setup.
 
@@ -435,3 +467,28 @@ The `report-build-state` tool demonstrates the plugin pattern:
 2. Variables like `$.thisDir()` are substituted with actual paths
 3. Dependencies are resolved and executed in order
 4. Server (if running) handles scheduled tasks independently
+
+---
+
+## Testing
+
+### Sandboxed Setup Testing
+
+The setup script supports a `--test-setup` flag that creates an isolated test environment:
+
+```bash
+./data/setup-webdash.sh --test-setup
+```
+
+This will:
+1. Clone the repository fresh into `app-temporary/_webdash/test-framework-setup/`
+2. Apply your uncommitted changes (tracked files via git diff, plus untracked files)
+3. Run the full setup process in isolation
+4. Skip system modifications (bashrc, systemd)
+
+Use this to verify that setup works correctly before committing changes. The test will fail if:
+- Dependencies are missing from the profile
+- Module repositories have uncommitted changes that are required
+- Build errors occur
+
+On failure, recent errors are displayed from the WebDash log.
