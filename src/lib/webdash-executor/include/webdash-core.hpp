@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <webdash-constants.hpp>
 #include <webdash-utils.hpp>
 #include <webdash-types.hpp>
 
@@ -29,15 +30,6 @@ extern const string _WEBDASH_PROJECT_NAME_;
 
 class WebDashCore {
     private:
-
-        static constexpr char kMagicWebDashKeyInProfile[] = "$#.myworld.rootDir";
-        static constexpr char kMagicWebDashValueInProfile[] = "this";
-
-        // Must equal to kMagicWebDashKeyInProfile without the first prefix
-        // until the first period (inclusive).
-        static constexpr char kMagicKeyInProfileErrorMessage[] = "myworld.rootDir";
-
-        static constexpr char kRootProfileFilename[] = "webdash-profile.json";
 
         /**
          * Only used to allow this class to offer a private "key" to other
@@ -85,6 +77,27 @@ class WebDashCore {
 
 
         /**
+         *  @brief Returns the filename of WebDash's root profile JSON file.
+         *  @returns The profile filename (e.g., "webdash-profile.json").
+         */
+        static constexpr const char* GetRootProfileFilename() { return WebDashConst::Public::kRootProfileFilename; }
+
+
+        /**
+         *  @brief Returns the filename of the shell initialization script.
+         *  @returns The terminal init filename (e.g., "webdash.terminal.init.sh").
+         */
+        static constexpr const char* GetTerminalInitFilename() { return WebDashConst::Public::kTerminalInitFilename; }
+
+
+        /**
+         *  @brief Returns the filename of per-project WebDash config files.
+         *  @returns The project config filename (e.g., "webdash.config.json").
+         */
+        static constexpr const char* GetProjectConfigFilename() { return WebDashConst::Public::kProjectConfigFilename; }
+
+
+        /**
          *  @brief For the project that includes this library, it will return the project-specific directory for
          *         PERSISTENT file storage.
          *  @returnsProject's persistent file storage.
@@ -119,14 +132,14 @@ class WebDashCore {
         /**
          *  @brief Adds log statements for the project that includes this WebDash library. The log files are stored in the
          *         temporary storage of the project (i.e., app-temporary/logging/<project name>).
+         *
+         *         Log files are automatically rotated when they exceed 10 MB. The previous log file is renamed to
+         *         previous.logging.<type>.txt before a fresh file is created.
+         *
          *  @param type The type of log statement (e.g., DEBUG, INFO, etc.).
          *  @param msg The log message.
-         *  @param keep_version_from_previous_execution If the program was newly started, deletes the previous file (if
-         *                                              it exists) iff set to true.
          */
-        void Log(const WebDashType::LogType type,
-                 const std::string msg,
-                 const bool keep_version_from_previous_execution = false);
+        void Log(const WebDashType::LogType type, const std::string msg);
 
         /**
          *  @brief Special type of log message. Never deletes previous entry and uses LogType::NOTIFY.
@@ -156,6 +169,13 @@ class WebDashCore {
         vector<WebDashType::GitProjectMetadata> GetExternalGitProjects();
 
 
+        /**
+         *  @brief Returns whether interactive clone prompts are enabled.
+         *  @returns true if user should be prompted before auto-cloning modules.
+         */
+        bool IsInteractiveCloneEnabled();
+
+
     private:
 
 
@@ -171,18 +191,12 @@ class WebDashCore {
          *  @brief Determines the root of the webdash-managed directory structure, which is the directory with the JSON
          *         Profile file (kRootProfileFilename) file with the key-value pair:
          *
-         *               kMagicKeyInProfileErrorMessage : kMagicWebDashValueInProfile
+         *               WebDashConst::Internal::kMagicProfileKey : WebDashConst::Internal::kMagicProfileValue
          *
          *         The search for this file happens through ancestry-traversal, starting with the current work
          *         directory (cwd).
          */
         void _CalculateRootDirectory();
-
-
-        /**
-         *  @brief Clears (and/or creates) the log files for: Error, Info, Warn, Debug.
-         */
-        void _InitializeLogFiles();
 
 
         /**
@@ -193,9 +207,6 @@ class WebDashCore {
          */
         void _FinalizeInitialization(filesystem::path profile_filepath, vector<WebDashUtils::JsonEntry> key_values);
 
-
-        // Determines if the given LogType's file was previously cleared during this process' execution.
-        std::map<WebDashType::LogType, bool> _logfile_was_cleared;
 
         // Holds the WebDashCore singleton instance, once created.
         static std::optional<WebDashCore> _singleton_instance;
@@ -228,11 +239,10 @@ WebDashCore& WebDash();
 namespace IWebDash {
 
     /**
-     * @brief Appends a notifying log line, without clearning any previous
-     *        content, irrespective of if the process was
+     * @brief Appends a notifying log line.
      * @param msg The message to log.
      */
     inline void Notify(const std::string msg) {
-        WebDash().Log(WebDashType::LogType::NOTIFY, msg, true);
+        WebDash().Log(WebDashType::LogType::NOTIFY, msg);
     }
 }

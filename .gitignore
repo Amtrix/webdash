@@ -14,3 +14,6 @@
 !/data/setup-webdash.sh
 !/data/WebDash.xml
 !/.gitignore
+
+# Temporary files (logs, caches, test artifacts)
+/app-temporary/

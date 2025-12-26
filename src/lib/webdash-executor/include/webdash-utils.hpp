@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <webdash-constants.hpp>
 #include <webdash-exceptions.hpp>
 
 #include <string>
@@ -26,7 +27,28 @@ namespace {
 
 namespace WebDashUtils {
 
-    const string kWebDashJsonKeyPrefixID = "$#";
+    // Alias for backward compatibility - prefer WebDashConst::Internal::kJsonKeyPrefix
+    const string kWebDashJsonKeyPrefixID = WebDashConst::Internal::kJsonKeyPrefix;
+
+
+    /**
+     * @brief Result of executing a shell command.
+     */
+    struct CommandResult {
+        int exit_code = -1;
+        std::string output;
+
+        bool Success() const { return exit_code == 0; }
+        bool Failed() const { return exit_code != 0; }
+    };
+
+
+    /**
+     * @brief Executes a shell command and captures its output (stdout + stderr).
+     * @param command The shell command to execute.
+     * @returns CommandResult containing exit code and captured output.
+     */
+    CommandResult ExecuteCommand(const std::string& command);
 
 
     /**

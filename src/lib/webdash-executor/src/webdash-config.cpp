@@ -2,15 +2,167 @@
 #include "webdash-config.hpp"
 #include "webdash-types.hpp"
 #include "webdash-core.hpp"
+#include "webdash-constants.hpp"
 
 #include <iostream>
 #include <fstream>
 #include <optional>
+#include <cstdlib>
 #include <nlohmann/json.hpp>
 using namespace std;
 
 
 namespace {
+
+    /**
+     * @brief Normalize a path by removing trailing slashes for comparison.
+     */
+    string NormalizePath(const string& path) {
+        string result = path;
+        while (!result.empty() && (result.back() == '/' || result.back() == '\\')) {
+            result.pop_back();
+        }
+        return result;
+    }
+
+    /**
+     * @brief Check if path_a is a prefix of or equal to path_b (for module matching).
+     *        Handles paths like "/foo/bar" matching "/foo/bar/webdash.config.json"
+     */
+    bool PathMatchesModule(const string& module_path, const string& dependency_path) {
+        string norm_module = NormalizePath(module_path);
+        string norm_dep = NormalizePath(dependency_path);
+
+        // Exact match
+        if (norm_module == norm_dep) return true;
+
+        // Module path is a prefix of dependency path
+        if (norm_dep.find(norm_module) == 0) {
+            // Make sure it's a directory boundary
+            if (norm_dep.size() > norm_module.size() &&
+                (norm_dep[norm_module.size()] == '/' || norm_dep[norm_module.size()] == '\\')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @brief Prompt the user for confirmation.
+     * @param message The message to display.
+     * @returns true if user confirms (y/Y/yes), false otherwise.
+     */
+    bool PromptUserConfirmation(const string& message) {
+        std::cout << message << " [y/N]: ";
+        std::cout.flush();
+
+        string response;
+        std::getline(std::cin, response);
+
+        // Trim whitespace
+        while (!response.empty() && std::isspace(response.front())) response.erase(0, 1);
+        while (!response.empty() && std::isspace(response.back())) response.pop_back();
+
+        // Convert to lowercase for comparison
+        for (char& c : response) c = std::tolower(c);
+
+        return response == "y" || response == "yes";
+    }
+
+    /**
+     * @brief Try to auto-clone a module if the path doesn't exist.
+     *        Searches the "modules" array in webdash-profile.json for a matching path.
+     * @param path The path that doesn't exist.
+     * @returns true if successfully cloned, false otherwise.
+     */
+    bool TryAutoCloneModule(const std::filesystem::path& path) {
+        // Check if the path already has valid content:
+        // - If it's a file, it exists
+        // - If it's a directory, it must contain webdash.config.json
+        if (std::filesystem::exists(path)) {
+            if (std::filesystem::is_directory(path)) {
+                // Directory exists - check if it has webdash.config.json
+                auto config_path = path / WebDashConst::Public::kProjectConfigFilename;
+                if (std::filesystem::exists(config_path)) {
+                    return true;  // Already cloned and has config
+                }
+                // Directory exists but is empty/incomplete - continue to try cloning
+            } else {
+                return true;  // It's a file and exists
+            }
+        }
+
+        string path_str = path.string();
+
+        // Get modules from profile
+        auto modules = WebDashCore::Get().GetExternalGitProjects();
+
+        for (const auto& module : modules) {
+            if (module.destination.empty() || module.source.empty()) {
+                continue;
+            }
+
+            if (PathMatchesModule(module.destination, path_str)) {
+                // Check if interactive clone is enabled
+                if (WebDashCore::Get().IsInteractiveCloneEnabled()) {
+                    string prompt = "Module not found: " + module.destination + "\n"
+                                  + "Clone from " + module.source + "?";
+                    if (!PromptUserConfirmation(prompt)) {
+                        WebDash().Log(WebDashType::LogType::INFO,
+                            "User declined to clone module: " + module.source);
+                        return false;
+                    }
+                }
+
+                WebDash().Log(WebDashType::LogType::INFO,
+                    "Auto-cloning module: " + module.source + " -> " + module.destination);
+
+                // If destination directory exists but is empty/incomplete, remove it first
+                // (git clone fails if the directory exists)
+                if (std::filesystem::exists(module.destination) &&
+                    std::filesystem::is_directory(module.destination)) {
+                    WebDash().Log(WebDashType::LogType::DEBUG,
+                        "Removing incomplete directory: " + module.destination);
+                    std::filesystem::remove_all(module.destination);
+                }
+
+                // Build git clone command
+                string clone_cmd = "git clone";
+                if (!module.branch.empty()) {
+                    clone_cmd += " -b " + module.branch;
+                }
+                clone_cmd += " \"" + module.source + "\" \"" + module.destination + "\"";
+
+                WebDash().Log(WebDashType::LogType::DEBUG, "Running: " + clone_cmd);
+
+                auto result = WebDashUtils::ExecuteCommand(clone_cmd);
+
+                if (result.Failed()) {
+                    WebDash().Log(WebDashType::LogType::ERR,
+                        "Failed to clone module: " + module.source + " -> " + module.destination);
+                    if (!result.output.empty()) {
+                        WebDash().Log(WebDashType::LogType::ERR, "Clone output: " + result.output);
+                    }
+                    return false;
+                }
+
+                WebDash().Log(WebDashType::LogType::INFO,
+                    "Successfully cloned: " + module.destination);
+
+                // Run post-clone task if specified
+                if (!module.webdash_task.empty()) {
+                    WebDash().Log(WebDashType::LogType::INFO,
+                        "Running post-clone task: " + module.webdash_task);
+                    // This will be handled by the normal dependency resolution
+                }
+
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /**
      * @brief Used for WebDash command-line parsing. Given a string, returns the prefix until the first
@@ -51,6 +203,13 @@ namespace {
 
 
 WebDashConfig::WebDashConfig(const std::filesystem::path config_filepath) {
+    // Check if the file exists before trying to canonicalize
+    if (!std::filesystem::exists(config_filepath)) {
+        _loading_failed = true;
+        _config_filepath = config_filepath;
+        return;
+    }
+
     auto canonical_config_filepath = std::filesystem::canonical(config_filepath);
 
     const auto& previous_config_filepath = _config_filepath;
@@ -146,7 +305,7 @@ vector<SubstitutionPair> WebDashConfig::GetProfileConfigSubtitutions() const {
     config_substitutions.insert(config_substitutions.end(), primary_substitutions.begin(), primary_substitutions.end());
 
     // Substitutions specific to this config file.
-    config_substitutions.push_back(make_pair("$.thisDir()", WebDashUtils::GetDirectoryOfFilepath(_config_filepath)));
+    config_substitutions.push_back(make_pair(WebDashConst::Public::kSubstThisDir, WebDashUtils::GetDirectoryOfFilepath(_config_filepath)));
 
     return config_substitutions;
 }
@@ -179,7 +338,7 @@ std::optional<WebDashConfigTask> WebDashConfig::GetTask(const string command_nam
     for (auto task : _tasks) {
         if (task.GetName() == command_name) {
             return task;
-        } else if (command_name == "" && task.GetName() == "all") {
+        } else if (command_name == "" && task.GetName() == WebDashConst::Public::kDefaultTaskName) {
             return task;
         }
     }
@@ -203,8 +362,8 @@ std::vector<WebDashType::RunReturn> WebDashConfig::Run(const string command_name
     //      $.thisDir()/relative-from-thisDir()/:blabla
     //          Specified in the config file of a directory.
     //
-    //      ./path-relative-to-myworld/x/y/z/webdash.config.json:blabla
-    //      ./path-relative-to-myworld/x/y/z/:blabla
+    //      ./path-relative-to-webdash-root/x/y/z/webdash.config.json:blabla
+    //      ./path-relative-to-webdash-root/x/y/z/:blabla
     //
     runconfig.TaskRetriever = [&](const string webdash_command_arg) -> optional<WebDashConfigTask> {
 
@@ -235,10 +394,15 @@ std::vector<WebDashType::RunReturn> WebDashConfig::Run(const string command_name
             continue;
         }
 
-        // If a specific command name was given, only run that one. Otherwise, find the "all" command and only run that.
-        if (task.GetName() == command_name) {
+        // When run_only_with_frequency is set, run ALL tasks that have a frequency
+        // (the task's ShouldExecuteTimewise will handle the actual filtering).
+        // Otherwise, only run the specific command or the "all" task.
+        if (runconfig.run_only_with_frequency) {
+            // Let the task decide if it should run based on frequency/timing
             ret.push_back(task.Run(runconfig));
-        } else if (command_name == "" && task.GetName() == "all") {
+        } else if (task.GetName() == command_name) {
+            ret.push_back(task.Run(runconfig));
+        } else if (command_name == "" && task.GetName() == WebDashConst::Public::kDefaultTaskName) {
             ret.push_back(task.Run(runconfig));
         }
     }
@@ -250,11 +414,23 @@ std::vector<WebDashType::RunReturn> WebDashConfig::Run(const string command_name
 inline std::optional<WebDashConfig> GetBestMatchingConfig(const std::filesystem::path& path,
                                                           const bool check_ancestry)
 {
+    // If the path doesn't exist, try to auto-clone from modules
+    if (!std::filesystem::exists(path)) {
+        TryAutoCloneModule(path);
+    }
+    // If the path exists but is a directory without webdash.config.json, also try to clone
+    else if (std::filesystem::is_directory(path)) {
+        auto config_path = path / WebDashConst::Public::kProjectConfigFilename;
+        if (!std::filesystem::exists(config_path)) {
+            TryAutoCloneModule(path);
+        }
+    }
+
     /**
      * If `path` is NOT a directory, do NOT do any smart config-searching.
      */
 
-    if (!filesystem::is_directory(path)) {
+    if (std::filesystem::exists(path) && !filesystem::is_directory(path)) {
         auto tconfig = WebDashConfig(path);
 
         if (!tconfig.LastLodingSucceeded())
@@ -264,6 +440,11 @@ inline std::optional<WebDashConfig> GetBestMatchingConfig(const std::filesystem:
         }
 
         return tconfig;
+    }
+
+    // If still doesn't exist after auto-clone attempt, bail
+    if (!std::filesystem::exists(path)) {
+        return nullopt;
     }
 
     /**
@@ -276,7 +457,7 @@ inline std::optional<WebDashConfig> GetBestMatchingConfig(const std::filesystem:
         go_up_index <= /*random MAX value*/ 30;
         go_up_index++) {
 
-        std::filesystem::path fs_config_path = current_directory.string() + "/webdash.config.json";
+        std::filesystem::path fs_config_path = current_directory / WebDashConst::Public::kProjectConfigFilename;
 
         auto tconfig = WebDashConfig(fs_config_path);
         if (tconfig.LastLodingSucceeded()) return tconfig;
@@ -302,7 +483,7 @@ std::optional<ConfigAndCommand> GetConfigAndCommand(const vector<string>& argume
 
     if (arguments.size() == 0) {
         auto config = GetBestMatchingConfig("./");
-        if (config) return std::pair{ config.value(), "all" };
+        if (config) return std::pair{ config.value(), WebDashConst::Public::kDefaultTaskName };
         else return nullopt;
     }
 
@@ -351,7 +532,7 @@ std::optional<ConfigAndCommand> GetConfigAndCommand(const vector<string>& argume
 
     {
         string path_str = ParseArgumentForPathWithCommandPrecedence(arguments[0]).value_or(arguments[0]);
-        string command_str = ParseArgumentForCommandWithPathPrecedence(arguments[0]).value_or("all");
+        string command_str = ParseArgumentForCommandWithPathPrecedence(arguments[0]).value_or(WebDashConst::Public::kDefaultTaskName);
 
         {
             auto config = GetBestMatchingConfig(path_str, false);

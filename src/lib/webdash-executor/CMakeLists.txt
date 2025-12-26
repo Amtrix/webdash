@@ -4,15 +4,15 @@ project(WebDashLibrary)
 
 FIND_PACKAGE(Boost COMPONENTS system filesystem REQUIRED)
 INCLUDE_DIRECTORIES( ${Boost_INCLUDE_DIR} )
-INCLUDE_DIRECTORIES( "$ENV{MYWORLD}/src/common" )
-INCLUDE_DIRECTORIES( "$ENV{MYWORLD}/src/bin/_webdash/common" )
+INCLUDE_DIRECTORIES( "$ENV{WEBDASH}/src/common" )
+INCLUDE_DIRECTORIES( "$ENV{WEBDASH}/src/bin/_webdash/common" )
 INCLUDE_DIRECTORIES( "${CMAKE_CURRENT_SOURCE_DIR}/include" )
 
-set (CMAKE_ARCHIVE_OUTPUT_DIRECTORY "$ENV{MYWORLD}/app-persistent/lib")
-set (CMAKE_LIBRARY_OUTPUT_DIRECTORY "$ENV{MYWORLD}/app-persistent/lib")
-set (CMAKE_RUNTIME_OUTPUT_DIRECTORY "$ENV{MYWORLD}/app-persistent/lib")
+set (CMAKE_ARCHIVE_OUTPUT_DIRECTORY "$ENV{WEBDASH}/app-persistent/lib")
+set (CMAKE_LIBRARY_OUTPUT_DIRECTORY "$ENV{WEBDASH}/app-persistent/lib")
+set (CMAKE_RUNTIME_OUTPUT_DIRECTORY "$ENV{WEBDASH}/app-persistent/lib")
 
-set (EXTERNAL_LIB_PATH "$ENV{MYWORLD}/src/lib/external")
+set (EXTERNAL_LIB_PATH "$ENV{WEBDASH}/src/lib/external")
 set (CMAKE_CXX_COMPILER /usr/bin/g++)
 
 # -rdynamic Keeps symbol names for readable output from the backtrace_symbols() call.
@@ -37,4 +37,3 @@ add_library(webdash-executor STATIC ${ALL_CPP_FILES} )
 
 # Library is added, link libraries to be built with it.
 target_link_libraries(webdash-executor Boost::filesystem)
-

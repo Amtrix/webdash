@@ -1,9 +1,13 @@
 #include "webdash-utils.hpp"
+#include "webdash-constants.hpp"
 
 #include <nlohmann/json.hpp>
 
+#include <cstdio>
+#include <sys/wait.h>
 #include <iostream>
 #include <string>
+#include <sstream>
 #include <vector>
 #include <fstream>
 #include <queue>
@@ -13,9 +17,6 @@ using json = nlohmann::json;
 
 
 namespace {
-
-    constexpr char kJsonBooleanTrueAsString[] = "true";
-    constexpr char kJsonBooleanFalseAsString[] = "false";
 
     /**
      * @brief Attempts to perform a key-value substitution on a given string.
@@ -46,7 +47,7 @@ namespace {
         }
 
         if (element.is_boolean()) {
-            return element.get<bool>() ? kJsonBooleanTrueAsString : kJsonBooleanFalseAsString;
+            return element.get<bool>() ? WebDashConst::Internal::kJsonBoolTrue : WebDashConst::Internal::kJsonBoolFalse;
         }
 
         if (element.is_number_integer()) {
@@ -64,6 +65,30 @@ namespace {
 
 
 namespace WebDashUtils {
+
+    CommandResult ExecuteCommand(const std::string& command) {
+        CommandResult result;
+        result.exit_code = -1;
+
+        // Redirect stderr to stdout so we capture both
+        std::string full_command = command + " 2>&1";
+
+        FILE* pipe = popen(full_command.c_str(), "r");
+        if (!pipe) {
+            result.output = "Failed to execute command: popen() failed";
+            return result;
+        }
+
+        char buffer[256];
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            result.output += buffer;
+        }
+
+        int status = pclose(pipe);
+        result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+
+        return result;
+    }
 
     string GetWebDashJsonKey(const JsonEntry& json_entry) {
         string key_identifier = kWebDashJsonKeyPrefixID;
@@ -129,11 +154,16 @@ namespace WebDashUtils {
              * as "[index]" to the chain.
              */
             if (u.second.is_array()) {
-                size_t array_index = -1;
+                size_t array_index = 0;
 
                 for (const auto& array_value_element : u.second) {
+                    // Build array key like "[0]", "[1]", etc.
+                    // Using ostringstream avoids a spurious GCC 12 -Wrestrict warning
+                    // that occurs with "[" + to_string(x) + "]" concatenation.
+                    std::ostringstream oss;
+                    oss << "[" << array_index << "]";
+                    const string array_entry_key = oss.str();
                     array_index++;
-                    const string array_entry_key = "[" + to_string(array_index) + "]";
 
                     vector<string> chain = u.first;
                     chain.push_back(array_entry_key);

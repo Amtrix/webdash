@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 
 project(webdash-client)
 
-set (EXTERNAL_LIB_PATH "$ENV{MYWORLD}/src/lib/external")
+set (EXTERNAL_LIB_PATH "$ENV{WEBDASH}/src/lib/external")
 set (CMAKE_CXX_COMPILER /usr/bin/g++)
 
 # -rdynamic Keeps symbol names for readable output from the backtrace_symbols() call.
@@ -14,8 +14,8 @@ FIND_PACKAGE(Boost REQUIRED COMPONENTS system filesystem)
 include_directories(${Boost_INCLUDE_DIR})
 include_directories(${EXTERNAL_LIB_PATH}/json/include)
 include_directories(${EXTERNAL_LIB_PATH}/websocketpp)
-include_directories($ENV{MYWORLD}/src/common)
-include_directories($ENV{MYWORLD}/src/lib/webdash-executor/include)
+include_directories($ENV{WEBDASH}/src/common)
+include_directories($ENV{WEBDASH}/src/lib/webdash-executor/include)
 include_directories(./include)
 
 
@@ -29,7 +29,7 @@ add_executable(webdash src/main.cpp)
 target_sources(webdash PRIVATE ${ALL_CPP_FILES})
 
 ###### Library paths
-target_link_libraries(webdash -L"$ENV{MYWORLD}/app-persistent/lib")
+target_link_libraries(webdash -L"$ENV{WEBDASH}/app-persistent/lib")
 
 
 ###### Libraries

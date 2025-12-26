@@ -1,0 +1,180 @@
+/**
+ * WebDash Constants
+ * =================
+ *
+ * Single source of truth for all WebDash magic strings and constants.
+ *
+ * Organization:
+ *   - WebDashConst::Public    — Public API: filenames, env vars (safe for external use)
+ *   - WebDashConst::Internal  — Implementation details: validation keys (internal only)
+ *
+ * Usage in C++:
+ *   #include <webdash-constants.hpp>
+ *   auto filename = WebDashConst::Public::kRootProfileFilename;
+ *
+ * Usage in shell scripts (setup-webdash.sh extracts these via grep):
+ *   PROFILE_FILENAME=$(grep -oP 'kRootProfileFilename\[\] = "\K[^"]+' webdash-constants.hpp)
+ */
+
+#pragma once
+
+#include <cstddef>
+
+namespace WebDashConst {
+
+/**
+ * Public constants - safe for external code and scripts to reference.
+ */
+namespace Public {
+
+    // =========================================================================
+    // Environment
+    // =========================================================================
+
+    /// Environment variable name that stores the path to WebDash root directory.
+    /// Used by: shell init scripts, CMake builds, runtime lookups.
+    constexpr char kEnvVarName[] = "WEBDASH";
+
+
+    // =========================================================================
+    // Filenames
+    // =========================================================================
+
+    /// Root profile JSON that defines environment, paths, and projects.
+    /// Located at: $WEBDASH/webdash-profile.json
+    constexpr char kRootProfileFilename[] = "webdash-profile.json";
+
+    /// Shell initialization script that users source in ~/.bashrc.
+    /// Located at: $WEBDASH/webdash.terminal.init.sh
+    constexpr char kTerminalInitFilename[] = "webdash.terminal.init.sh";
+
+    /// Per-project config JSON that defines commands and tasks.
+    /// Located at: <project>/webdash.config.json
+    constexpr char kProjectConfigFilename[] = "webdash.config.json";
+
+
+    // =========================================================================
+    // Directory Names
+    // =========================================================================
+
+    /// Persistent storage directory (survives updates).
+    constexpr char kPersistentStorageDir[] = "app-persistent";
+
+    /// Temporary storage directory (may be cleared).
+    constexpr char kTemporaryStorageDir[] = "app-temporary";
+
+    /// Logging subdirectory within temporary storage.
+    constexpr char kLoggingSubdir[] = "logging";
+
+
+    // =========================================================================
+    // Logging
+    // =========================================================================
+
+    /// Maximum log file size in bytes before rotation (10 MB).
+    constexpr std::size_t kMaxLogFileSizeBytes = 10 * 1024 * 1024;
+
+    /// Prefix for rotated log files.
+    constexpr char kLogRotationPrefix[] = "previous.";
+
+    /// Log filename prefix.
+    constexpr char kLogFilenamePrefix[] = "logging.";
+
+
+    // =========================================================================
+    // Task Names
+    // =========================================================================
+
+    /// Default task name when none is specified.
+    constexpr char kDefaultTaskName[] = "all";
+
+
+    // =========================================================================
+    // Substitution Keywords
+    // =========================================================================
+
+    /// Keyword for root directory substitution in configs.
+    constexpr char kSubstRootDir[] = "$.rootDir()";
+
+    /// Keyword for current config's directory substitution.
+    constexpr char kSubstThisDir[] = "$.thisDir()";
+
+
+    // =========================================================================
+    // Profile JSON Keys
+    // =========================================================================
+
+    /// Key for external modules array in webdash-profile.json.
+    /// Modules are WebDash projects with webdash.config.json that can be built/run.
+    /// Example:
+    ///   "modules": [
+    ///       { "path": "$.rootDir()/src/bin/my-tool", "git": "git@github.com:user/repo.git", "run": ":build" }
+    ///   ]
+    constexpr char kProfileKeyModules[] = "modules";
+
+    /// Key for external dependencies array in webdash-profile.json.
+    /// Dependencies are external git repos that just need to be cloned (no WebDash tasks).
+    /// Example:
+    ///   "dependencies": [
+    ///       { "path": "$.rootDir()/src/lib/external/json", "git": "git@github.com:nlohmann/json.git" }
+    ///   ]
+    constexpr char kProfileKeyDependencies[] = "dependencies";
+
+    /// Module/dependency entry fields (shared).
+    constexpr char kModuleFieldPath[] = "path";
+    constexpr char kModuleFieldGit[] = "git";
+    constexpr char kModuleFieldBranch[] = "branch";
+    constexpr char kModuleFieldRun[] = "run";
+    constexpr char kModuleFieldAutoRegister[] = "register";
+
+
+    // =========================================================================
+    // Profile Settings Keys
+    // =========================================================================
+
+    /// Key for settings object in webdash-profile.json.
+    constexpr char kProfileKeySettings[] = "settings";
+
+    /// Whether to prompt user before auto-cloning modules (default: false).
+    /// Example in webdash-profile.json:
+    ///   "settings": {
+    ///       "interactive-clone": true
+    ///   }
+    constexpr char kSettingsInteractiveClone[] = "interactive-clone";
+
+} // namespace Public
+
+
+/**
+ * Internal constants - implementation details, not part of public API.
+ */
+namespace Internal {
+
+    // =========================================================================
+    // Profile Validation
+    // =========================================================================
+
+    /// Magic key that must exist in profile JSON to identify it as WebDash root.
+    /// The profile is valid if it contains: { "webdash": { "rootDir": "this" } }
+    /// which flattens to the key-value pair below.
+    constexpr char kMagicProfileKey[] = "$#.webdash.rootDir";
+    constexpr char kMagicProfileValue[] = "this";
+
+    /// Human-readable version of the magic key for error messages.
+    constexpr char kMagicProfileKeyHumanReadable[] = "webdash.rootDir";
+
+
+    // =========================================================================
+    // JSON Parsing
+    // =========================================================================
+
+    /// Prefix used to identify WebDash JSON keys (flattened key notation).
+    constexpr char kJsonKeyPrefix[] = "$#";
+
+    /// String representations of JSON boolean values.
+    constexpr char kJsonBoolTrue[] = "true";
+    constexpr char kJsonBoolFalse[] = "false";
+
+} // namespace Internal
+
+} // namespace WebDashConst

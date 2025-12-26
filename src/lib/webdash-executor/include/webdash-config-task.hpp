@@ -51,7 +51,7 @@ class WebDashConfigTask {
         string _taskid;
         std::optional<string> _frequency;
         vector<string> _actions;
-        vector<string> _dependencies;
+        vector<WebDashType::Dependency> _dependencies;
         string _name;
         std::optional<string> _wdir;
 

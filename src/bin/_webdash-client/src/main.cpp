@@ -5,6 +5,7 @@
 // WebDash
 #include <webdash-config.hpp>
 #include <webdash-core.hpp>
+#include <webdash-constants.hpp>
 #include <webdash-exceptions.hpp>
 
 // Standard
@@ -47,18 +48,19 @@ fi
 
 /**
  * Mapping of WebDash commands to their user-friendly string format.
+ * Convention: multi-character options use -- (double dash), single char use - (single dash)
  */
 namespace NATIVE_COMMANDS
 {
-    string REGISTER = "register";
-    string UNREGISTER = "unregister";
-    string RELOADALL = "reload-all";
-    string HELP = "help";
-    string LIST_CONFIG = "list-config";
-    string LIST_DEFINITIONS = "list-definitions";
+    string REGISTER = "--register";
+    string UNREGISTER = "--unregister";
+    string RELOADALL = "--reload-all";
+    string HELP = "--help";
+    string LIST_CONFIG = "--list-config";
+    string LIST_DEFINITIONS = "--list-definitions";
     string _INT_CREATE_BUILD_INIT = _WEBDASH_INTERNAL_CMD_PREFIX + "create-build-init";
     string _INT_CREATE_PROJECT_CLONER = _WEBDASH_INTERNAL_CMD_PREFIX + "create-project-cloner";
-    string PING_SERVER = "ping-server";
+    string PING_SERVER = "--ping-server";
 };
 
 
@@ -181,8 +183,8 @@ bool CreateProjectCloner_InternalCommand(const vector<string>& arguments) {
         return false;
 
     /**
-     * Based on $MYWORLD/definitions.json, create a file that creates a clean clone of all the listed repositories,
-     * listed in the 'pull-projects' key.
+     * Based on webdash-profile.json, create a file that creates a clean clone of all the listed repositories,
+     * listed in the 'modules' key.
      *
      * WARNING: This file deletes everything previously cloned.
      */
@@ -193,11 +195,21 @@ bool CreateProjectCloner_InternalCommand(const vector<string>& arguments) {
         writer(WebDashType::StorageWriteType::Clear, "");
 
         for (auto entry : entries) {
-            writer(WebDashType::StorageWriteType::Append, "git clone " + entry.source + " " + entry.destination + " &> /dev/null\n");
-            writer(WebDashType::StorageWriteType::Append, "webdash " + entry.destination + "/webdash.config.json" + entry.webdash_task + "\n");
+            // Build clone command with optional branch
+            string clone_cmd = "git clone";
+            if (!entry.branch.empty()) {
+                clone_cmd += " -b " + entry.branch;
+            }
+            clone_cmd += " " + entry.source + " " + entry.destination + " &> /dev/null\n";
+            writer(WebDashType::StorageWriteType::Append, clone_cmd);
+
+            // Run post-clone task if specified
+            if (!entry.webdash_task.empty()) {
+                writer(WebDashType::StorageWriteType::Append, "webdash " + entry.destination + "/" + WebDashCore::GetProjectConfigFilename() + entry.webdash_task + "\n");
+            }
 
             if (entry.do_register) {
-                writer(WebDashType::StorageWriteType::Append, "webdash register " + entry.destination + "/webdash.config.json\n");
+                writer(WebDashType::StorageWriteType::Append, "webdash --register " + entry.destination + "/" + WebDashCore::GetProjectConfigFilename() + "\n");
             }
         }
 
@@ -229,7 +241,7 @@ bool Register_Command(const vector<string>& arguments) {
         return false;
 
 
-    string path = "./webdash.config.json";
+    string path = string("./") + WebDashCore::GetProjectConfigFilename();
     if (arguments.size() == 2) path = arguments[1];
 
     auto wconfig = WebDashConfig(path);
@@ -263,7 +275,7 @@ bool Unregister_Command(const vector<string>& arguments) {
     if  (arguments[0] != NATIVE_COMMANDS::UNREGISTER)
         return false;
 
-    string path = "./webdash.config.json";
+    string path = string("./") + WebDashCore::GetProjectConfigFilename();
     if (arguments.size() == 2) path = arguments[1];
 
     auto wconfig = WebDashConfig(path);
@@ -314,7 +326,7 @@ bool PingServer_Command(const vector<string>& arguments) {
 
 
 /**
- * @brief Command: `webdash ping-server`.
+ * @brief Command: `webdash help` (also `webdash --help` or `webdash -help`).
  * @param arguments The (command line) arguments.
  * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
  */
@@ -322,18 +334,34 @@ bool Help_Command(const vector<string>& arguments) {
     if (arguments.size() != 1)
         return false;
 
-    if (arguments[0] != NATIVE_COMMANDS::HELP)
+    if (arguments[0] != NATIVE_COMMANDS::HELP &&
+        arguments[0] != "-h")
         return false;
+
+    cout << endl;
+    cout << "WebDash - Project command runner and environment manager" << endl;
+    cout << endl;
+    cout << "USAGE:" << endl;
+    cout << "    webdash <command>                  Run command from ./webdash.config.json" << endl;
+    cout << "    webdash /path/to/project:<command> Run command from specified project" << endl;
+    cout << "    webdash <native-command>           Run a WebDash native command" << endl;
+    cout << endl;
 
     vector<string> commands = WebDashNativeCommands();
 
-    cout << endl << string(kSpaceOutGroup, ' ') << "WebDash's list of native commands:" << endl;
+    cout << "NATIVE COMMANDS:" << endl;
 
     for (auto cmd : commands) {
         if (IsInternalCommand(cmd) == false) {
             cout << string(kSpaceOutCommands, ' ') << cmd << endl;
         }
     }
+
+    cout << endl;
+    cout << "SHORT OPTIONS:" << endl;
+    cout << string(kSpaceOutCommands, ' ') << "-h" << string(12, ' ') << "Show this help" << endl;
+    cout << endl;
+    cout << "Run 'webdash --list-config' to see all registered project configs." << endl;
 
     return true;
 }
@@ -357,14 +385,39 @@ bool ListDefinitions_Command(const vector<string>& arguments) {
     if  (arguments[0] != NATIVE_COMMANDS::LIST_DEFINITIONS)
         return false;
 
-    vector<string> adjusted_arguments(arguments.begin() + 1, arguments.end());
+    vector<SubstitutionPair> definitions;
 
-    auto config_and_command = GetConfigAndCommand(adjusted_arguments);
+    if (arguments.size() == 2) {
+        // Path specified - get definitions from that config
+        vector<string> adjusted_arguments(arguments.begin() + 1, arguments.end());
+        auto config_and_command = GetConfigAndCommand(adjusted_arguments);
 
-    if (!config_and_command)
-        return false;
+        if (!config_and_command)
+            return false;
 
-    auto definitions = config_and_command->first.GetProfileConfigSubtitutions();
+        definitions = config_and_command->first.GetProfileConfigSubtitutions();
+    } else {
+        // No path specified - try local config, fall back to global definitions
+        auto config_and_command = GetConfigAndCommand({});
+
+        if (config_and_command) {
+            definitions = config_and_command->first.GetProfileConfigSubtitutions();
+        } else {
+            // No local config - show global definitions from root profile
+            const auto& keychain_values = WebDashCore::Get().GetKeyValuesFromRootProfile();
+            for (auto& keychain_value : keychain_values) {
+                definitions.push_back(WebDashUtils::GenerateWebDashConfigSubstitution(keychain_value));
+            }
+
+            // Add primary substitutions
+            auto primary_subs = WebDashCore::Get().GetPrimaryKeywordSubstitutions();
+            definitions.insert(definitions.end(), primary_subs.begin(), primary_subs.end());
+
+            // Add $.thisDir() for current directory
+            definitions.push_back(make_pair(WebDashConst::Public::kSubstThisDir, filesystem::current_path().string()));
+        }
+    }
+
     size_t lwidth = 3, rwidth = 3;
 
     for (const auto& def: definitions)
@@ -412,7 +465,7 @@ void ExecuteUserInput(int argc, char **argv) {
      */
 
     const auto root_directory = WebDashCore::Get().GetWebDashRootDirectory();
-    cout << "Root: " << root_directory << "/webdash-profile.json" << endl;
+    cout << "Root: " << root_directory << "/" << WebDashCore::GetRootProfileFilename() << endl;
     cout << "-----------------" << endl;
     cout.flush();
 
@@ -460,29 +513,34 @@ void ExecuteUserInput(int argc, char **argv) {
      * Still not handled? Explain to the USER that it was **not possible** to take an action.
      */
 
-    cout << "No matching config/command found! Please select one of the following:" << endl;
+    cerr << endl;
+    cerr << "No matching command found." << endl;
 
     auto configWithCommand = GetConfigAndCommand(arguments);
 
     if (configWithCommand.has_value()) {
-
-        cout << endl << string(kSpaceOutGroup, ' ') << "From the selected WebDash config at '" << configWithCommand->first.GetPath() << "':" << endl;
+        cerr << endl << string(kSpaceOutGroup, ' ') << "From the selected WebDash config at '" << configWithCommand->first.GetPath() << "':" << endl;
         vector<string> commands = WebDashList(configWithCommand->first.GetPath());
 
         for (auto cmd : commands) {
-            cout << string(kSpaceOutCommands, ' ') << cmd << endl;
+            cerr << string(kSpaceOutCommands, ' ') << cmd << endl;
         }
+    } else {
+        cerr << endl << string(kSpaceOutGroup, ' ') << "No '" << WebDashCore::GetProjectConfigFilename() << "' found in current directory." << endl;
+        cerr << string(kSpaceOutGroup, ' ') << "Run 'webdash --list-config' to see registered projects." << endl;
     }
 
     vector<string> commands = WebDashNativeCommands();
 
-    cout << endl << string(kSpaceOutGroup, ' ') << "WebDash's list of native commands:" << endl;
+    cerr << endl << string(kSpaceOutGroup, ' ') << "WebDash native commands:" << endl;
 
     for (auto cmd : commands) {
         if (IsInternalCommand(cmd) == false) {
-            cout << string(kSpaceOutCommands, ' ') << cmd << endl;
+            cerr << string(kSpaceOutCommands, ' ') << cmd << endl;
         }
     }
+
+    cerr << endl << string(kSpaceOutGroup, ' ') << "For more help: webdash --help" << endl;
 }
 
 
@@ -495,17 +553,51 @@ int main(int argc, char **argv) {
 
     try {
         ExecuteUserInput(argc, argv);
+    } catch (WebDashException::NoWebDashRootFound& e) {
+        // Specific handling for missing root config - common user error
+        cerr << "\n";
+        cerr << "ERROR: WebDash root configuration not found." << endl;
+        cerr << "\n";
+        cerr << "DETAILS:" << endl;
+        cerr << "  " << e.what() << endl;
+        cerr << "\n";
+        cerr << "HINTS:" << endl;
+        cerr << "  1. Ensure '" << WebDashCore::GetRootProfileFilename() << "' exists in an ancestor directory" << endl;
+        cerr << "  2. The file must contain: { \"webdash\": { \"rootDir\": \"this\" } }" << endl;
+        cerr << "  3. Or set the WEBDASH environment variable to the root directory" << endl;
+        cerr << "\n";
+        return 1;
+    } catch (WebDashException::FileNotFound& e) {
+        // Specific handling for missing project config file
+        cerr << "\n";
+        cerr << "ERROR: Project configuration file not found." << endl;
+        cerr << "\n";
+        cerr << "DETAILS:" << endl;
+        cerr << "  " << e.what() << endl;
+        cerr << "\n";
+        cerr << "HINTS:" << endl;
+        cerr << "  1. Create a '" << WebDashCore::GetProjectConfigFilename() << "' in the current directory" << endl;
+        cerr << "  2. Or specify the full path: webdash /path/to/project:" << endl;
+        cerr << "  3. Run 'webdash -list-config' to see all registered configs" << endl;
+        cerr << "\n";
+        return 1;
     } catch (WebDashException::General& e) {
-        cout << "ERROR: WebDash client received an WebDashException::General." << endl;
-        cout << "MESSAGE: " << e.what() << endl;
-        e.PrintBacktrace(cout);
+        cerr << "\n";
+        cerr << "ERROR: WebDash encountered an exception." << endl;
+        cerr << "MESSAGE: " << e.what() << endl;
+        cerr << "\n";
+        e.PrintBacktrace(cerr);
         return 1;
     } catch (std::exception& e) {
-        cout << "ERROR: WebDash client received an std::exception." << endl;
-        cout << "MESSAGE: " << e.what() << endl;
+        cerr << "\n";
+        cerr << "ERROR: WebDash client received an std::exception." << endl;
+        cerr << "MESSAGE: " << e.what() << endl;
+        cerr << "\n";
         return 1;
     } catch (...) {
-        cout << "ERROR: WebDash client does not handle the thrown exception." << endl;
+        cerr << "\n";
+        cerr << "ERROR: WebDash client does not handle the thrown exception." << endl;
+        cerr << "\n";
         throw;
     }
 

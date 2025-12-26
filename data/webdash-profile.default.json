@@ -1,10 +1,10 @@
 {
-    "myworld": {
+    "webdash": {
         "rootDir": "this",
-        ".field-comment": "Identifies that this definitions.json file is at root"
+        ".field-comment": "Identifies that this webdash-profile.json file is at root"
     },
     "env": {
-        "MYWORLD": "$.rootDir()"
+        "WEBDASH": "$.rootDir()"
     },
     "ports": {
         "example-port-as-env-variable": "12092"
@@ -13,5 +13,37 @@
         "$.rootDir()/app-persistent/bin",
         "$.rootDir()/app-persistent/bin/_webdash"
     ],
-    "pull-projects": []
+    "modules": [
+        {
+            "path": "$.rootDir()/src/static/wallpaper-tasks",
+            "git": "git@github.com:Amtrix/src-static-wallpaper-tasks.git"
+        },
+        {
+            "path": "$.rootDir()/src/lib/webdash-executor",
+            "git": "git@github.com:Amtrix/src-lib-webdash-executor.git"
+        },
+        {
+            "path": "$.rootDir()/src/bin/_webdash-heartbeat",
+            "git": "git@github.com:Amtrix/src-bin-_webdash-heartbeat.git"
+        },
+        {
+            "path": "$.rootDir()/src/bin/_webdash-server",
+            "git": "git@github.com:Amtrix/src-bin-_webdash-server.git"
+        },
+        {
+            "path": "$.rootDir()/src/bin/report-build-state",
+            "git": "git@github.com:Amtrix/src-bin-report-build-state.git"
+        }
+    ],
+    "dependencies": [
+        {
+            "path": "$.rootDir()/src/lib/external/json",
+            "git": "git@github.com:nlohmann/json.git"
+        },
+        {
+            "path": "$.rootDir()/src/lib/external/websocketpp",
+            "git": "git@github.com:zaphoyd/websocketpp.git",
+            "branch": "develop"
+        }
+    ]
 }

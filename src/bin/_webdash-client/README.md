@@ -4,7 +4,7 @@
 <h3>Examples:</h3>
 <ul>
   <li><code>webdash build</code></li>
-  <li><code>webdash $#.build // to use definitions from /definitions.json</code></li>
+  <li><code>webdash $#.build // to use definitions from webdash-profile.json</code></li>
   <li><code>webdash -register // to register the current directory to the server</code></li>
   <li><code>webdash -list // to list the available commands from the current directory</code></li>
   <li><code>webdash -list-config // to list <it>all</it> registered configs</code></li>

@@ -2,8 +2,11 @@
 #include "webdash-config-task.hpp"
 #include "webdash-core.hpp"
 #include "webdash-config.hpp"
+#include "webdash-constants.hpp"
 
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
@@ -65,8 +68,39 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
     try {
         json dependencies = task_config["dependencies"];
 
-        for (auto dependency : dependencies)
-            this->_dependencies.push_back(dependency.get<std::string>());
+        for (const auto& dependency : dependencies) {
+            if (dependency.is_string()) {
+                // Simple string dependency: "path/to/project:task"
+                this->_dependencies.emplace_back(dependency.get<std::string>());
+            } else if (dependency.is_object()) {
+                // Inline module dependency: { "path": "...", "git": "...", "run": "..." }
+                string path = "";
+                string git = "";
+                string branch = "";
+                string run_task = "";
+
+                if (dependency.contains(WebDashConst::Public::kModuleFieldPath)) {
+                    path = dependency[WebDashConst::Public::kModuleFieldPath].get<std::string>();
+                }
+                if (dependency.contains(WebDashConst::Public::kModuleFieldGit)) {
+                    git = dependency[WebDashConst::Public::kModuleFieldGit].get<std::string>();
+                }
+                if (dependency.contains(WebDashConst::Public::kModuleFieldBranch)) {
+                    branch = dependency[WebDashConst::Public::kModuleFieldBranch].get<std::string>();
+                }
+                if (dependency.contains(WebDashConst::Public::kModuleFieldRun)) {
+                    run_task = dependency[WebDashConst::Public::kModuleFieldRun].get<std::string>();
+                }
+
+                // Construct the full path:task string
+                string full_path = path;
+                if (!run_task.empty()) {
+                    full_path += ":" + run_task;
+                }
+
+                this->_dependencies.emplace_back(full_path, git, branch);
+            }
+        }
     }
     catch (...)
     {
@@ -135,7 +169,8 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
     }
 
     for (auto& dependency : _dependencies) {
-        dependency = WebDashUtils::ApplySubstitutions(dependency, defs);
+        dependency.path = WebDashUtils::ApplySubstitutions(dependency.path, defs);
+        // git and branch don't need substitution (they're external URLs)
     }
 
     if (_wdir.has_value()) {
@@ -353,16 +388,57 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
     }
 
     for (int i = 0; i < (int)_dependencies.size(); ++i) {
-        auto task = config.TaskRetriever(_dependencies[i]);
+        const auto& dep = _dependencies[i];
+
+        // For inline modules, try to clone first if needed
+        if (dep.IsInlineModule()) {
+            // Extract path without :task suffix for clone check
+            string path_only = dep.path;
+            auto colon_pos = path_only.find(':');
+            if (colon_pos != string::npos) {
+                path_only = path_only.substr(0, colon_pos);
+            }
+
+            if (!std::filesystem::exists(path_only)) {
+                WebDash().Log(WebDashType::LogType::INFO,
+                    "Auto-cloning inline module: " + dep.git + " -> " + path_only);
+
+                string clone_cmd = "git clone";
+                if (!dep.branch.empty()) {
+                    clone_cmd += " -b " + dep.branch;
+                }
+                clone_cmd += " \"" + dep.git + "\" \"" + path_only + "\"";
+
+                auto result = WebDashUtils::ExecuteCommand(clone_cmd);
+                if (result.Failed()) {
+                    WebDash().Log(WebDashType::LogType::ERR,
+                        "Failed to clone inline module: " + dep.git + " -> " + path_only);
+                    if (!result.output.empty()) {
+                        WebDash().Log(WebDashType::LogType::ERR, "Clone output: " + result.output);
+                    }
+                    ret.return_code = 1;
+                    if (!_continue_on_error) return ret;
+                    continue;
+                }
+            }
+        }
+
+        auto task = config.TaskRetriever(dep.path);
 
         if (task.has_value()) {
             auto ret_sub = task.value().Run(config);
             ret.output += ret_sub.output;
             ret.return_code |= ret_sub.return_code;
 
-            if (ret.return_code && _continue_on_error) {
+            if (ret.return_code && !_continue_on_error) {
                 return ret;
             }
+        } else {
+            // Dependency not found - this is a fatal error
+            WebDash().Log(WebDashType::LogType::ERR,
+                "Dependency not found: " + dep.path + " (required by " + _taskid + ")");
+            ret.return_code = 1;
+            if (!_continue_on_error) return ret;
         }
     }
 

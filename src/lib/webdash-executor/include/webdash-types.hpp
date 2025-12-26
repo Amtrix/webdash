@@ -52,13 +52,14 @@ namespace WebDashType {
     };
 
     /**
-     * @struct Information to manage a GIT project.
+     * @struct Information to manage a GIT project (module).
      */
     struct GitProjectMetadata {
-        string source;
-        string destination;
-        string webdash_task;
-        bool do_register;
+        string source;       // Git URL (new: "git" field, legacy: "source")
+        string destination;  // Local path (new: "path" field, legacy: "destination")
+        string branch;       // Git branch (optional)
+        string webdash_task; // Task to run after clone (new: "run" field, legacy: "exec")
+        bool do_register = false;   // Auto-register with WebDash server
     };
 
     /**
@@ -73,6 +74,25 @@ namespace WebDashType {
             return_code = 0;
             output = "";
         }
+    };
+
+    /**
+     * @struct Represents a dependency, which can be either a simple string path
+     *         or an inline module declaration with git URL.
+     */
+    struct Dependency {
+        string path;              // Path to dependency (with :task suffix)
+        string git;               // Git URL (optional - for inline module)
+        string branch;            // Git branch (optional)
+
+        // Simple string dependency
+        Dependency(const string& p) : path(p) {}
+
+        // Full inline module dependency
+        Dependency(const string& p, const string& g, const string& b = "")
+            : path(p), git(g), branch(b) {}
+
+        bool IsInlineModule() const { return !git.empty(); }
     };
 
     /**
