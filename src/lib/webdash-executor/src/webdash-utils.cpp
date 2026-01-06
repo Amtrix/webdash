@@ -11,6 +11,9 @@
 #include <vector>
 #include <fstream>
 #include <queue>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
 
 using namespace std;
 using json = nlohmann::json;
@@ -212,6 +215,26 @@ namespace WebDashUtils {
         }
 
         return ret;
+    }
+
+
+    bool IsPortUnused(int port) {
+        int sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (sock < 0) {
+            return false;  // Can't create socket, assume port is in use
+        }
+
+        struct sockaddr_in addr;
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // Connect to localhost
+        addr.sin_port = htons(port);
+
+        // Try to connect - if connection succeeds, port is IN USE
+        int result = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
+        close(sock);
+
+        // If connect failed, port is unused (nothing listening)
+        return result != 0;
     }
 
 

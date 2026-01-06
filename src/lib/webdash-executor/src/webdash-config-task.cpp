@@ -168,6 +168,14 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
         WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": dashboard notification not specified.");
     }
 
+    try {
+        const string condition = task_config["condition"].get<std::string>();
+        this->_condition = condition;
+    }
+    catch (...) {
+        // No condition specified - command runs unconditionally
+    }
+
     //
     // Apply all keyword substitutions.
     //
@@ -187,6 +195,8 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
     if (_wdir.has_value()) {
         _wdir = WebDashUtils::ApplySubstitutions(_wdir.value(), defs);
     }
+
+    // Note: _condition is evaluated at runtime, not substituted here
 }
 
 bool is_number(const std::string& s) {
@@ -411,6 +421,15 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
             _print_skip_has_happened = true;
         }
 
+        return ret;
+    }
+
+    // Check condition before executing
+    if (!EvaluateCondition()) {
+        cout << "\033[1;33m-----------------" << endl;
+        cout << "  TASKID: " << _taskid << endl;
+        cout << "  SKIPPED: Condition not satisfied: " << _condition.value_or("(none)") << endl;
+        cout << "-----------------\033[0m" << endl;
         return ret;
     }
 
@@ -658,4 +677,45 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
     }
 
     return ret;
+}
+
+
+bool WebDashConfigTask::EvaluateCondition() {
+    if (!_condition.has_value()) {
+        return true;  // No condition = always run
+    }
+
+    string cond = _condition.value();
+
+    // Check for NOT operator (!)
+    bool negate = false;
+    if (!cond.empty() && cond[0] == '!') {
+        negate = true;
+        cond = cond.substr(1);
+    }
+
+    // Parse $.isPortUnused(<port>)
+    const string prefix = "$.isPortUnused(";
+    if (cond.find(prefix) == 0 && cond.back() == ')') {
+        string port_str = cond.substr(prefix.length(), cond.length() - prefix.length() - 1);
+
+        // Remove any whitespace
+        port_str.erase(remove_if(port_str.begin(), port_str.end(), ::isspace), port_str.end());
+
+        try {
+            int port = std::stoi(port_str);
+            if (port < 1 || port > 65535) {
+                WebDash().Log(WebDashType::LogType::ERR, "Invalid port number in condition: " + port_str);
+                return false;
+            }
+            bool result = WebDashUtils::IsPortUnused(port);
+            return negate ? !result : result;
+        } catch (...) {
+            WebDash().Log(WebDashType::LogType::ERR, "Failed to parse port number in condition: " + port_str);
+            return false;
+        }
+    }
+
+    WebDash().Log(WebDashType::LogType::ERR, "Unknown condition: " + cond);
+    return false;
 }

@@ -78,4 +78,12 @@ class WebDashConfigTask {
         bool _continue_on_error = false;
 
         bool _allow_execution_as_ancestor = false;
+
+        std::optional<string> _condition;  // Condition that must be true to run command
+
+        /**
+         * @brief Evaluates the condition string (e.g., $.isPortUnused(8080)).
+         * @returns true if condition is satisfied or no condition set, false otherwise.
+         */
+        bool EvaluateCondition();
 };

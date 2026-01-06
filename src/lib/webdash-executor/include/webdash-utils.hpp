@@ -62,6 +62,12 @@ namespace WebDashUtils {
         const string& source,
         const vector<SubstitutionPair>& substitutions);
 
+    /**
+     * @brief Check if a TCP port is currently unused (not listening).
+     * @param port The port number to check.
+     * @returns true if the port is unused, false if it's in use.
+     */
+    bool IsPortUnused(int port);
 
     /**
      *  @class Describes a JSON key-chain to its corresponding value.
