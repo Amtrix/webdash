@@ -52,14 +52,19 @@ namespace WebDashType {
     };
 
     /**
-     * @struct Information to manage a GIT project (module).
+     * @struct Information to manage a GIT project (module) or setup-based dependency.
      */
     struct GitProjectMetadata {
         string source;       // Git URL (new: "git" field, legacy: "source")
         string destination;  // Local path (new: "path" field, legacy: "destination")
         string branch;       // Git branch (optional)
         string webdash_task; // Task to run after clone (new: "run" field, legacy: "exec")
+        vector<string> actions; // Array of shell commands for setup (alternative to git clone)
+        string wdir;         // Working directory for actions (supports $.path() for self-reference)
         bool do_register = false;   // Auto-register with WebDash server
+
+        // Check if this is a setup-based dependency (no git, has actions)
+        bool IsSetupBased() const { return source.empty() && !actions.empty(); }
     };
 
     /**
@@ -101,7 +106,9 @@ namespace WebDashType {
     struct RunConfig {
         bool run_only_with_frequency = false;
         bool redirect_output_to_str = false;
+        bool verbose = false;  // Show detailed execution info (Forking, TASKID, etc.)
         std::function<std::optional<WebDashConfigTask>(string)> TaskRetriever;
+        std::vector<std::string> extra_args;  // Command-line arguments for $.args() substitution
     };
 
     using StoreWriteChannel = std::function<void(WebDashType::StorageWriteType, string)>;

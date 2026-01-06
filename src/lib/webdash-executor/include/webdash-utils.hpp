@@ -167,4 +167,19 @@ namespace WebDashUtils {
      *          (e.g., /mnt/c/dir/).
      **/
     string GetDirectoryOfFilepath(const string& filepath);
+
+
+    /**
+     * @brief Tokenizes a command string respecting shell quoting rules.
+     *        Handles single quotes, double quotes, and backslash escapes.
+     *
+     *        Examples:
+     *          "echo hello world"       -> ["echo", "hello", "world"]
+     *          "bash -c 'test a = b'"   -> ["bash", "-c", "test a = b"]
+     *          "echo \"hello world\""   -> ["echo", "hello world"]
+     *
+     * @param command The command string to tokenize.
+     * @returns Vector of tokens with quotes removed and escapes processed.
+     **/
+    vector<string> TokenizeCommand(const string& command);
 }

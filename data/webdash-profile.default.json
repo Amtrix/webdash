@@ -7,7 +7,7 @@
         "WEBDASH": "$.rootDir()"
     },
     "ports": {
-        "example-port-as-env-variable": "12092"
+        "src-static-wallpaper-engine-dashboard-monitor": "8765"
     },
     "path-add": [
         "$.rootDir()/app-persistent/bin",

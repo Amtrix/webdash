@@ -7,7 +7,7 @@ rm -f $WEBDASH/app-persistent/bin/webdash
 cp $MYDIR/build/webdash $WEBDASH/app-persistent/bin/
 
 # Install completion scripts
-mkdir -p $WEBDASH/app-persistent/data/webdash-client/completions
-cp $MYDIR/completions/webdash.bash $WEBDASH/app-persistent/data/webdash-client/completions/
+mkdir -p $WEBDASH/app-persistent/bin/completions
+cp $MYDIR/completions/webdash.bash $WEBDASH/app-persistent/bin/completions/
 
 echo "Successfully installed newest webdash."

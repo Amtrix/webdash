@@ -214,4 +214,62 @@ namespace WebDashUtils {
         return ret;
     }
 
+
+    vector<string> TokenizeCommand(const string& command) {
+        vector<string> tokens;
+        string current_token;
+        bool in_single_quote = false;
+        bool in_double_quote = false;
+        bool escape_next = false;
+
+        for (size_t i = 0; i < command.size(); ++i) {
+            char c = command[i];
+
+            if (escape_next) {
+                // Backslash escape: add the character literally
+                current_token += c;
+                escape_next = false;
+                continue;
+            }
+
+            if (c == '\\' && !in_single_quote) {
+                // Backslash outside single quotes starts an escape sequence
+                // (single quotes treat backslash literally in shell)
+                escape_next = true;
+                continue;
+            }
+
+            if (c == '\'' && !in_double_quote) {
+                // Toggle single quote mode (unless inside double quotes)
+                in_single_quote = !in_single_quote;
+                continue;
+            }
+
+            if (c == '"' && !in_single_quote) {
+                // Toggle double quote mode (unless inside single quotes)
+                in_double_quote = !in_double_quote;
+                continue;
+            }
+
+            if (isspace(c) && !in_single_quote && !in_double_quote) {
+                // Whitespace outside quotes: end current token
+                if (!current_token.empty()) {
+                    tokens.push_back(current_token);
+                    current_token.clear();
+                }
+                continue;
+            }
+
+            // Regular character: add to current token
+            current_token += c;
+        }
+
+        // Add final token if any
+        if (!current_token.empty()) {
+            tokens.push_back(current_token);
+        }
+
+        return tokens;
+    }
+
 } // namespace WebDashUtils

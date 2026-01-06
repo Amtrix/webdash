@@ -450,7 +450,9 @@ vector<WebDashType::GitProjectMetadata> WebDashCore::GetExternalGitProjects() {
 
         const vector<string> tokens = json_entry.GetTokens();
 
-        if (tokens.size() != 3) {
+        // Handle both simple fields (3 tokens: dependencies.0.git)
+        // and array fields (4 tokens: dependencies.0.actions.0)
+        if (tokens.size() < 3) {
             continue;
         }
 
@@ -460,7 +462,22 @@ vector<WebDashType::GitProjectMetadata> WebDashCore::GetExternalGitProjects() {
 
         const string value = WebDashUtils::ApplySubstitutions(json_entry.GetValue(), GetPrimaryKeywordSubstitutions());
 
+        // Handle actions array (4 tokens: dependencies.0.actions.0)
+        if (tokens.size() == 4 && property_name == WebDashConst::Public::kModuleFieldActions) {
+            projects[array_index].actions.push_back(value);
+            continue;
+        }
+
+        // Simple fields require exactly 3 tokens
+        if (tokens.size() != 3) {
+            continue;
+        }
+
         // Field names
+        // Handle singular "action" field (added to actions vector)
+        if (property_name == WebDashConst::Public::kModuleFieldAction) {
+            projects[array_index].actions.push_back(value);
+        }
         if (property_name == WebDashConst::Public::kModuleFieldGit) {
             projects[array_index].source = value;
         }
@@ -476,13 +493,36 @@ vector<WebDashType::GitProjectMetadata> WebDashCore::GetExternalGitProjects() {
         if (property_name == WebDashConst::Public::kModuleFieldAutoRegister) {
             projects[array_index].do_register = (value == WebDashConst::Internal::kJsonBoolTrue);
         }
+        if (property_name == WebDashConst::Public::kModuleFieldWdir) {
+            projects[array_index].wdir = value;
+        }
     }
 
     vector<WebDashType::GitProjectMetadata> ret;
 
     // Summarize all projects into a vector, each element representing one GIT project.
     for (const auto& element : projects) {
-        ret.push_back(element.second);
+        auto project = element.second;
+        const string path_substitution = "$.path()";
+
+        // Resolve $.path() in wdir field to the project's destination path
+        if (!project.wdir.empty()) {
+            size_t pos = project.wdir.find(path_substitution);
+            if (pos != string::npos) {
+                project.wdir.replace(pos, path_substitution.length(), project.destination);
+            }
+        }
+
+        // Resolve $.path() in actions to the project's destination path
+        for (auto& action : project.actions) {
+            size_t pos = action.find(path_substitution);
+            while (pos != string::npos) {
+                action.replace(pos, path_substitution.length(), project.destination);
+                pos = action.find(path_substitution, pos + project.destination.length());
+            }
+        }
+
+        ret.push_back(project);
     }
 
     return ret;

@@ -161,6 +161,77 @@ napi_value GetProjectName(napi_env env, napi_callback_info info) {
 
 
 /**
+ * webdash.getProfileValue(keyPath: string): string | undefined
+ *
+ * Get a value from webdash-profile.json by dot-separated key path.
+ * Example: getProfileValue("ports.wallpaper-monitor") returns "8765"
+ */
+napi_value GetProfileValue(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value argv[1];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+    if (argc < 1) {
+        ThrowError(env, "getProfileValue() requires 1 argument: keyPath");
+        return nullptr;
+    }
+
+    std::string keyPath = GetString(env, argv[0]);
+
+    // Parse the key path into tokens
+    std::vector<std::string> searchTokens;
+    std::string token;
+    for (char c : keyPath) {
+        if (c == '.') {
+            if (!token.empty()) {
+                searchTokens.push_back(token);
+                token.clear();
+            }
+        } else {
+            token += c;
+        }
+    }
+    if (!token.empty()) {
+        searchTokens.push_back(token);
+    }
+
+    try {
+        const auto& entries = WebDashCore::Get().GetKeyValuesFromRootProfile();
+
+        for (const auto& entry : entries) {
+            const auto& tokens = entry.GetTokens();
+
+            // Check if tokens match the search path
+            if (tokens.size() == searchTokens.size()) {
+                bool match = true;
+                for (size_t i = 0; i < tokens.size(); ++i) {
+                    if (tokens[i] != searchTokens[i]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    const std::string& value = entry.GetValue();
+                    napi_value result;
+                    napi_create_string_utf8(env, value.c_str(), value.length(), &result);
+                    return result;
+                }
+            }
+        }
+
+        // Key not found, return undefined
+        napi_value undefined;
+        napi_get_undefined(env, &undefined);
+        return undefined;
+
+    } catch (const std::exception& e) {
+        ThrowError(env, e.what());
+        return nullptr;
+    }
+}
+
+
+/**
  * Module initialization.
  */
 napi_value Init(napi_env env, napi_value exports) {
@@ -170,6 +241,7 @@ napi_value Init(napi_env env, napi_value exports) {
         {"notify", nullptr, Notify, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getRootDirectory", nullptr, GetRootDirectory, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getProjectName", nullptr, GetProjectName, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getProfileValue", nullptr, GetProfileValue, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
 
     napi_define_properties(env, exports, sizeof(descriptors) / sizeof(descriptors[0]), descriptors);

@@ -9,7 +9,9 @@
 
 using namespace std;
 using json = nlohmann::json;
-using ConfigAndCommand = pair<WebDashConfig, string>;
+
+/// Tuple of (config, command_name, extra_arguments)
+using ConfigAndCommand = tuple<WebDashConfig, string, vector<string>>;
 
 
 /**
@@ -33,7 +35,7 @@ public:
      * @returnsA RunReturn object that stores all the output information of the
      *         process.
      */
-    std::vector<WebDashType::RunReturn> Run(const string command_name = "", WebDashType::RunConfig runconfig = {});
+    std::vector<WebDashType::RunReturn> Run(const string command_name = "", WebDashType::RunConfig runconfig = {}, const vector<string>& extra_args = {});
 
 
     /**
@@ -63,6 +65,13 @@ public:
      * @returnsReturns `true` if the loading succeeded, `false` otherwise.
      */
     bool LastLodingSucceeded() const { return !_loading_failed; };
+
+
+    /**
+     * @brief Returns the error message if loading failed.
+     * @returns The error message, or empty string if loading succeeded.
+     */
+    string GetLoadingError() const { return _loading_error; };
 
 
     /**
@@ -111,6 +120,9 @@ private:
 
     // If TRUE, then the loading of the config at the given path has failed (e.g., malformed JSON).
     bool _loading_failed;
+
+    // Error message if loading failed.
+    string _loading_error;
 };
 
 

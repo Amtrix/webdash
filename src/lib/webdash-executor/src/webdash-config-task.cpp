@@ -71,9 +71,14 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
         for (const auto& dependency : dependencies) {
             if (dependency.is_string()) {
                 // Simple string dependency: "path/to/project:task"
-                this->_dependencies.emplace_back(dependency.get<std::string>());
+                string dep_str = dependency.get<std::string>();
+
+                // Strip legacy ? suffix (now always resolves by default)
+                if (!dep_str.empty() && dep_str.back() == '?') {
+                    dep_str = dep_str.substr(0, dep_str.size() - 1);
+                }
+                this->_dependencies.emplace_back(dep_str);
             } else if (dependency.is_object()) {
-                // Inline module dependency: { "path": "...", "git": "...", "run": "..." }
                 string path = "";
                 string git = "";
                 string branch = "";
@@ -98,7 +103,13 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
                     full_path += ":" + run_task;
                 }
 
-                this->_dependencies.emplace_back(full_path, git, branch);
+                if (!git.empty()) {
+                    // Inline module with git
+                    this->_dependencies.emplace_back(full_path, git, branch);
+                } else {
+                    // Simple path dependency
+                    this->_dependencies.emplace_back(full_path);
+                }
             }
         }
     }
@@ -239,10 +250,30 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
     WebDashType::RunReturn retval;
     _times_called++;
 
+    // Apply $.args() substitution at runtime
+    if (!config.extra_args.empty()) {
+        string args_str;
+        for (size_t i = 0; i < config.extra_args.size(); ++i) {
+            if (i > 0) args_str += " ";
+            // Quote arguments containing spaces
+            if (config.extra_args[i].find(' ') != string::npos) {
+                args_str += "\"" + config.extra_args[i] + "\"";
+            } else {
+                args_str += config.extra_args[i];
+            }
+        }
+        action = WebDashUtils::ApplySubstitutions(action, {{WebDashConst::Public::kSubstArgs, args_str}});
+    } else {
+        // Replace $.args() with empty string if no args provided
+        action = WebDashUtils::ApplySubstitutions(action, {{WebDashConst::Public::kSubstArgs, ""}});
+    }
+
     WebDash().Log(WebDashType::LogType::DEBUG, "Executing: " + this->_taskid);
     WebDash().Log(WebDashType::LogType::DEBUG, "    => " + action);
 
-    cout << "Forking... " << endl;
+    if (config.verbose) {
+        cout << "Forking... " << endl;
+    }
 
     int filedes[2];
     // We create a pipe to be shared with two processes.
@@ -275,10 +306,13 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
             WebDash().Log(WebDashType::LogType::DEBUG, "Working directory set to: " + _wdir.value());
         }
 
-        std::istringstream iss(action.c_str());
+        // Always use bash -c for consistent shell behavior (supports redirects, pipes, globs, etc.)
+        std::vector<std::string> execParts = {"bash", "-c", action};
 
-        std::vector<std::string> execParts(std::istream_iterator<std::string>{iss},
-                                           std::istream_iterator<std::string>());
+        if (execParts.empty()) {
+            cerr << "WebDashConfigTask::Run: Empty command" << endl;
+            exit(1);
+        }
 
         const char **paramList = new const char*[execParts.size() + 1];
 
@@ -287,7 +321,7 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
 
         paramList[execParts.size()] = NULL;
 
-        // child
+        // Always show task info (TASKID, CWD, CALL)
         cout << "\033[1;33m-----------------" << endl;
         cout << "  TASKID: " << _taskid << endl;
         cout << "  CWD:    " << std::filesystem::current_path() << endl;
@@ -387,14 +421,129 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
         IWebDash::Notify(_taskid);
     }
 
+    // If this task has a wdir that points to a different directory,
+    // update the TaskRetriever to look up tasks in that directory's config.
+    // This allows wdir to act as a context switch for task references.
+    WebDashType::RunConfig effective_config = config;
+    if (_wdir.has_value()) {
+        std::filesystem::path wdir_path(_wdir.value());
+        auto wdir_config = GetBestMatchingConfig(wdir_path, false);
+        if (wdir_config.has_value()) {
+            // Create a new TaskRetriever that looks in the wdir's config for :task references
+            effective_config.TaskRetriever = [wdir_config_copy = wdir_config.value(), original_retriever = config.TaskRetriever](const string& webdash_command_arg) mutable -> std::optional<WebDashConfigTask> {
+                if (!webdash_command_arg.empty() && webdash_command_arg[0] == ':') {
+                    // Look up in the wdir's config
+                    return wdir_config_copy.GetTask(webdash_command_arg.substr(1));
+                } else {
+                    // For path-based references, use the original retriever
+                    return original_retriever(webdash_command_arg);
+                }
+            };
+        }
+    }
+
     for (int i = 0; i < (int)_dependencies.size(); ++i) {
         const auto& dep = _dependencies[i];
+
+        // Extract path without :task suffix for existence check
+        string check_path = dep.path;
+        auto colon_pos = check_path.find(':');
+        if (colon_pos != string::npos) {
+            check_path = check_path.substr(0, colon_pos);
+        }
+
+        // If path doesn't exist, try to auto-resolve from profile
+        if (!check_path.empty() && !std::filesystem::exists(check_path)) {
+            bool resolved = false;
+            auto profile_deps = WebDashCore::Get().GetExternalGitProjects();
+            for (const auto& profile_dep : profile_deps) {
+                if (profile_dep.destination == check_path) {
+                    if (profile_dep.IsSetupBased()) {
+                        // Setup-based dependency (actions)
+                        std::cout << "Auto-resolving dependency: " << check_path << std::endl;
+
+                        // Create working directory
+                        string working_dir = profile_dep.wdir.empty() ? profile_dep.destination : profile_dep.wdir;
+                        std::filesystem::create_directories(working_dir);
+
+                        // Run setup actions
+                        for (const auto& action : profile_dep.actions) {
+                            std::cout << "  Running: " << action << std::endl;
+                            string full_cmd = "cd \"" + working_dir + "\" && " + action;
+                            auto result = WebDashUtils::ExecuteCommand(full_cmd);
+                            if (!result.output.empty()) {
+                                std::cout << "  Output: " << result.output << std::endl;
+                            }
+                            if (result.Failed()) {
+                                std::cerr << "ERROR: Action failed: " << action << std::endl;
+                                ret.return_code = 1;
+                                if (!_continue_on_error) return ret;
+                            }
+                        }
+                        resolved = true;
+                    } else if (!profile_dep.source.empty()) {
+                        // Git-based dependency
+                        std::cout << "Auto-cloning dependency: " << check_path << std::endl;
+
+                        string clone_cmd = "git clone";
+                        if (!profile_dep.branch.empty()) {
+                            clone_cmd += " -b " + profile_dep.branch;
+                        }
+                        clone_cmd += " \"" + profile_dep.source + "\" \"" + profile_dep.destination + "\"";
+
+                        std::cout << "  Running: " << clone_cmd << std::endl;
+                        auto result = WebDashUtils::ExecuteCommand(clone_cmd);
+                        if (result.Failed()) {
+                            std::cerr << "ERROR: Clone failed: " << clone_cmd << std::endl;
+                            if (!result.output.empty()) {
+                                std::cerr << "  Output: " << result.output << std::endl;
+                            }
+                            ret.return_code = 1;
+                            if (!_continue_on_error) return ret;
+                        } else if (!profile_dep.actions.empty()) {
+                            // Run post-clone actions if any
+                            string working_dir = profile_dep.wdir.empty() ? profile_dep.destination : profile_dep.wdir;
+                            std::cout << "  Running post-clone actions in: " << working_dir << std::endl;
+
+                            for (const auto& action : profile_dep.actions) {
+                                std::cout << "    Running: " << action << std::endl;
+                                string full_cmd = "cd \"" + working_dir + "\" && " + action;
+                                auto action_result = WebDashUtils::ExecuteCommand(full_cmd);
+                                if (!action_result.output.empty()) {
+                                    std::cout << "    Output: " << action_result.output << std::endl;
+                                }
+                                if (action_result.Failed()) {
+                                    std::cerr << "ERROR: Post-clone action failed: " << action << std::endl;
+                                    ret.return_code = 1;
+                                    if (!_continue_on_error) return ret;
+                                }
+                            }
+                        }
+                        resolved = true;
+                    }
+                    break;
+                }
+            }
+        }
+
+        // If this is a path-only dependency (no :task suffix), we're done with it
+        if (check_path == dep.path) {
+            // Check that the path exists
+            if (!std::filesystem::exists(check_path)) {
+                WebDash().Log(WebDashType::LogType::ERR,
+                    "Required path does not exist: " + check_path + " (required by " + _taskid + ")");
+                std::cerr << "ERROR: Required path does not exist: " << check_path << std::endl;
+                ret.return_code = 1;
+                if (!_continue_on_error) return ret;
+            }
+            continue;  // Path-only dependency done, move to next
+        }
 
         // For inline modules, try to clone first if needed
         if (dep.IsInlineModule()) {
             // Extract path without :task suffix for clone check
             string path_only = dep.path;
-            auto colon_pos = path_only.find(':');
+            colon_pos = path_only.find(':');
             if (colon_pos != string::npos) {
                 path_only = path_only.substr(0, colon_pos);
             }
@@ -423,10 +572,10 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
             }
         }
 
-        auto task = config.TaskRetriever(dep.path);
+        auto task = effective_config.TaskRetriever(dep.path);
 
         if (task.has_value()) {
-            auto ret_sub = task.value().Run(config);
+            auto ret_sub = task.value().Run(effective_config);
             ret.output += ret_sub.output;
             ret.return_code |= ret_sub.return_code;
 
@@ -434,31 +583,76 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
                 return ret;
             }
         } else {
-            // Dependency not found - this is a fatal error
-            WebDash().Log(WebDashType::LogType::ERR,
-                "Dependency not found: " + dep.path + " (required by " + _taskid + ")");
-            ret.return_code = 1;
-            if (!_continue_on_error) return ret;
+            // TaskRetriever returned nullopt - this could be a cross-config reference
+            // Check if it looks like a cross-config task reference (path:task pattern)
+            bool is_cross_config = false;
+            if (dep.path.find(':') != string::npos) {
+                // Has a task separator - likely a cross-config reference like "path/to/config:task"
+                is_cross_config = true;
+            }
+
+            if (is_cross_config) {
+                // Execute via webdash command
+                string effective_action = "webdash " + dep.path;
+                auto ret_sub = Run(effective_config, effective_action);
+                ret.output += ret_sub.output;
+                ret.return_code |= ret_sub.return_code;
+
+                if (ret.return_code && !_continue_on_error) {
+                    return ret;
+                }
+            } else {
+                // Dependency not found - this is a fatal error
+                WebDash().Log(WebDashType::LogType::ERR,
+                    "Dependency not found: " + dep.path + " (required by " + _taskid + ")");
+                ret.return_code = 1;
+                if (!_continue_on_error) return ret;
+            }
         }
     }
 
     for (int i = 0; i < (int)_actions.size(); ++i) {
 
         const string action = _actions[i];
-        auto maybesubtask = config.TaskRetriever(action);
+        auto maybesubtask = effective_config.TaskRetriever(action);
 
         if (maybesubtask.has_value()) {
-            auto ret_sub = maybesubtask.value().Run(config);
+            auto ret_sub = maybesubtask.value().Run(effective_config);
             ret.output += ret_sub.output;
             ret.return_code |= ret_sub.return_code;
         }
         else {
-            auto ret_sub = Run(config, action);
+            // Check if this looks like a cross-config webdash task reference
+            // Valid patterns: "../:task", "./subdir:task", "path/config.json:task", "/abs/path:task"
+            string effective_action = action;
+            bool is_cross_config_task = false;
+
+            // Cross-config refs must start with a path indicator:
+            // - "./" or "../" (relative path)
+            // - "/" (absolute path)
+            // - Or a path ending in ".json:" (explicit config file)
+            if (action.size() > 2) {
+                bool starts_with_path = (action.substr(0, 2) == "./" ||
+                                         action.substr(0, 3) == "../" ||
+                                         action[0] == '/');
+                bool has_task_separator = action.find(':') != string::npos;
+
+                if (starts_with_path && has_task_separator) {
+                    is_cross_config_task = true;
+                }
+            }
+
+            if (is_cross_config_task) {
+                effective_action = "webdash " + action;
+            }
+
+            auto ret_sub = Run(effective_config, effective_action);
             ret.output += ret_sub.output;
             ret.return_code |= ret_sub.return_code;
         }
 
         if (ret.return_code && !_continue_on_error) {
+            std::cerr << "ERROR: Action failed with exit code " << ret.return_code << ": " << action << std::endl;
             return ret;
         }
     }

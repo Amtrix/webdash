@@ -8,6 +8,7 @@
 #include <fstream>
 #include <optional>
 #include <cstdlib>
+#include <set>
 #include <nlohmann/json.hpp>
 using namespace std;
 
@@ -227,6 +228,11 @@ WebDashConfig::WebDashConfig(const std::filesystem::path config_filepath) {
 }
 
 
+namespace {
+    // Track which config files have already reported parse errors to avoid duplicate messages
+    std::set<std::string> reported_parse_errors;
+}
+
 std::optional<vector<WebDashConfigTask>> WebDashConfig::LoadAndCheckKnownFailures(
     const std::filesystem::path& config_filepath)
 {
@@ -234,7 +240,14 @@ std::optional<vector<WebDashConfigTask>> WebDashConfig::LoadAndCheckKnownFailure
         return Load(config_filepath);
     }
     catch (const WebDashException::ConfigJsonParseError& e) {
-        WebDash().Log(WebDashType::LogType::DEBUG, "Not a valid WebDash config file: " + config_filepath.string() + ". Reason: " + e.what());
+        _loading_error = e.what();
+        // Only report each file's error once
+        std::string path_str = config_filepath.string();
+        if (reported_parse_errors.find(path_str) == reported_parse_errors.end()) {
+            reported_parse_errors.insert(path_str);
+            WebDash().Log(WebDashType::LogType::ERR, "Failed to parse config '" + path_str + "': " + e.what());
+            std::cerr << "ERROR: Failed to parse '" << path_str << "': " << e.what() << std::endl;
+        }
         return nullopt;
     }
 
@@ -269,10 +282,28 @@ vector<WebDashConfigTask> WebDashConfig::Load(const std::filesystem::path config
 
     WebDash().Log(WebDashType::LogType::DEBUG, "Commands loaded. Available count: " + to_string(json_commands.size()));
 
+    // Parse top-level dependencies (applies to all commands in this config)
+    json top_level_deps;
+    try {
+        top_level_deps = json_config["dependencies"];
+    } catch (...) {
+        // No top-level dependencies, that's fine
+    }
+
     int command_index = 0;
 
     for (auto json_command : json_commands) {
         try {
+            // Merge top-level dependencies into command if they exist
+            if (!top_level_deps.is_null() && top_level_deps.is_array()) {
+                if (!json_command.contains("dependencies")) {
+                    json_command["dependencies"] = json::array();
+                }
+                for (const auto& dep : top_level_deps) {
+                    json_command["dependencies"].push_back(dep);
+                }
+            }
+
             const string command_identifier = config_filepath.string() + "#" + json_command["name"].get<std::string>();
             tasks.emplace_back(this, command_identifier, json_command);
         } catch (...) {
@@ -347,8 +378,11 @@ std::optional<WebDashConfigTask> WebDashConfig::GetTask(const string command_nam
 }
 
 
-std::vector<WebDashType::RunReturn> WebDashConfig::Run(const string command_name, WebDashType::RunConfig runconfig) {
+std::vector<WebDashType::RunReturn> WebDashConfig::Run(const string command_name, WebDashType::RunConfig runconfig, const vector<string>& extra_args) {
     std::vector<WebDashType::RunReturn> ret;
+
+    // Store extra args in runconfig for $.args() substitution
+    runconfig.extra_args = extra_args;
 
     //
     // Actions can be specified in multiple ways:
@@ -367,23 +401,16 @@ std::vector<WebDashType::RunReturn> WebDashConfig::Run(const string command_name
     //
     runconfig.TaskRetriever = [&](const string webdash_command_arg) -> optional<WebDashConfigTask> {
 
-        // The case where the
+        // The case where the action starts with ':' - look in current config
          if (webdash_command_arg[0] == ':') {
             return GetTask(webdash_command_arg.substr(1));
         } else {
-            try {
-                vector<string> arguments;
-                arguments.push_back(webdash_command_arg);
-                auto config_and_command = GetConfigAndCommand(arguments);
-
-                if (!config_and_command)
-                    return nullopt;
-
-                return config_and_command->first.GetTask(config_and_command->second);
-            } catch (...) {
-                WebDash().Log(WebDashType::LogType::DEBUG, "Not a WebDash task (" + webdash_command_arg + ")");
-                return nullopt;
-            }
+            // For cross-config task references (like "../:task" or "path/to/config:task"),
+            // return nullopt to force execution via shell. This ensures the target config
+            // sets up its own TaskRetriever with proper context for sub-task resolution.
+            // The shell execution will invoke `webdash <path>:<task>` which properly
+            // initializes the target config's context including $.thisDir() and task lookup.
+            return nullopt;
         }
 
         return nullopt;
@@ -474,8 +501,11 @@ inline std::optional<WebDashConfig> GetBestMatchingConfig(const std::filesystem:
 
 std::optional<ConfigAndCommand> GetConfigAndCommand(const vector<string>& arguments) {
 
-    if (arguments.size() >= 3)
-        return nullopt;
+    // Extract extra arguments (everything after the first argument)
+    vector<string> extra_args;
+    if (arguments.size() > 1) {
+        extra_args = vector<string>(arguments.begin() + 1, arguments.end());
+    }
 
     /**
      * Case 0) No arguments given. Use root to attempt to identify a configuration file and use `all` as the command.
@@ -483,22 +513,7 @@ std::optional<ConfigAndCommand> GetConfigAndCommand(const vector<string>& argume
 
     if (arguments.size() == 0) {
         auto config = GetBestMatchingConfig("./");
-        if (config) return std::pair{ config.value(), WebDashConst::Public::kDefaultTaskName };
-        else return nullopt;
-    }
-
-    /**
-     * Case 2) Two arguments are given. First one MUST be the path to a config file (or directory in which
-     *         webdash.config.json is) and the second one MUST be a command's name.
-     */
-
-    if (arguments.size() == 2) {
-        string path_str = ParseArgumentForPathWithCommandPrecedence(arguments[0]).value_or(arguments[0]);
-        string command_str = arguments[1];
-
-        auto config = GetBestMatchingConfig(path_str);
-
-        if (config) return std::pair{ config.value(), command_str };
+        if (config) return std::make_tuple(config.value(), WebDashConst::Public::kDefaultTaskName, vector<string>{});
         else return nullopt;
     }
 
@@ -516,7 +531,7 @@ std::optional<ConfigAndCommand> GetConfigAndCommand(const vector<string>& argume
 
         if (!path) {
             auto config = GetBestMatchingConfig("./", false);
-            if (config) return std::pair{ config.value(), command_str };
+            if (config) return std::make_tuple(config.value(), command_str, extra_args);
         }
     }
 
@@ -536,7 +551,7 @@ std::optional<ConfigAndCommand> GetConfigAndCommand(const vector<string>& argume
 
         {
             auto config = GetBestMatchingConfig(path_str, false);
-            if (config) return std::pair{ config.value(), command_str };
+            if (config) return std::make_tuple(config.value(), command_str, extra_args);
         }
     }
 
@@ -551,7 +566,7 @@ std::optional<ConfigAndCommand> GetConfigAndCommand(const vector<string>& argume
 
         if (!path) {
             auto config = GetBestMatchingConfig("./", false);
-            if (config) return std::pair{ config.value(), command_str };
+            if (config) return std::make_tuple(config.value(), command_str, extra_args);
         }
     }
 

@@ -84,7 +84,7 @@ class WebDashCore {
 
 
         /**
-         *  @brief Returns the filename of the shell initialization script.
+         *  @brief Returns the filename of the shell init script (sourced by users).
          *  @returns The terminal init filename (e.g., "webdash.terminal.init.sh").
          */
         static constexpr const char* GetTerminalInitFilename() { return WebDashConst::Public::kTerminalInitFilename; }

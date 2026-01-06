@@ -217,6 +217,9 @@ WebDash uses a standard directory layout:
 app-persistent/          # Installed binaries and libraries
     bin/
     lib/
+    data/
+        webdash-client/
+            webdash.terminal.init.sh  # Source this in ~/.bashrc
 app-temporary/           # Logs and temporary files
     logging/
 data/                    # Setup scripts
@@ -224,7 +227,6 @@ src/                     # Source code
     bin/                 # Executables
     lib/                 # Libraries
 webdash-profile.json     # Global configuration
-webdash.terminal.init.sh # Shell initialization
 ```
 
 ## Global Configuration: webdash-profile.json

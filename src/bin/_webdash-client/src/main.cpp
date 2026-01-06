@@ -34,8 +34,13 @@ constexpr int kSpaceOutGroup = 4;
 /**
  * Commands to inject into a bash script to print the state of the WebDash process.
  */
-const std::string _WEBDASH_TERMINAL_INIT_FILE_APPENDIX = R"(# Footer
+const std::string _WEBDASH_TERMINAL_INIT_FILE_APPENDIX = R"(
+# Source bash completion if available
+if [[ -f "$WEBDASH/app-persistent/bin/completions/webdash.bash" ]]; then
+    source "$WEBDASH/app-persistent/bin/completions/webdash.bash"
+fi
 
+# Status check
 if pgrep -x "webdash-server" > /dev/null
 then
     echo 'WebDash: Server (<running>)'
@@ -195,7 +200,32 @@ bool CreateProjectCloner_InternalCommand(const vector<string>& arguments) {
         writer(WebDashType::StorageWriteType::Clear, "");
 
         for (auto entry : entries) {
-            // Build clone command with optional branch
+            // Check if this is a setup-based dependency (no git URL, has actions)
+            if (entry.IsSetupBased()) {
+                // For setup-based dependencies, run the actions if destination doesn't exist
+                writer(WebDashType::StorageWriteType::Append,
+                    "# Setup-based dependency: " + entry.destination + "\n");
+                writer(WebDashType::StorageWriteType::Append,
+                    "if [ ! -d \"" + entry.destination + "\" ]; then\n");
+                writer(WebDashType::StorageWriteType::Append,
+                    "    echo \"Running setup for: " + entry.destination + "\"\n");
+
+                // Use wdir if specified, otherwise default to destination
+                string working_dir = entry.wdir.empty() ? entry.destination : entry.wdir;
+                writer(WebDashType::StorageWriteType::Append,
+                    "    mkdir -p \"" + working_dir + "\"\n");
+                writer(WebDashType::StorageWriteType::Append,
+                    "    cd \"" + working_dir + "\"\n");
+                for (const auto& action : entry.actions) {
+                    writer(WebDashType::StorageWriteType::Append,
+                        "    " + action + "\n");
+                }
+                writer(WebDashType::StorageWriteType::Append,
+                    "fi\n\n");
+                continue;
+            }
+
+            // Build clone command with optional branch (git-based dependency)
             string clone_cmd = "git clone";
             if (!entry.branch.empty()) {
                 clone_cmd += " -b " + entry.branch;
@@ -396,13 +426,13 @@ bool ListDefinitions_Command(const vector<string>& arguments) {
         if (!config_and_command)
             return false;
 
-        definitions = config_and_command->first.GetProfileConfigSubtitutions();
+        definitions = std::get<0>(*config_and_command).GetProfileConfigSubtitutions();
     } else {
         // No path specified - try local config, fall back to global definitions
         auto config_and_command = GetConfigAndCommand({});
 
         if (config_and_command) {
-            definitions = config_and_command->first.GetProfileConfigSubtitutions();
+            definitions = std::get<0>(*config_and_command).GetProfileConfigSubtitutions();
         } else {
             // No local config - show global definitions from root profile
             const auto& keychain_values = WebDashCore::Get().GetKeyValuesFromRootProfile();
@@ -436,19 +466,31 @@ bool ListDefinitions_Command(const vector<string>& arguments) {
 
 /**
  * @brief Execute a command specified in a WebDash JSON configuration file.
- * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
+ * @param arguments The command arguments.
+ * @param verbose Whether to show verbose execution output.
+ * @returns 0 if command succeeded, positive error code if failed, -1 if not handled.
  */
-bool ConfigBased_Command(const vector<string>& arguments) {
+int ConfigBased_Command(const vector<string>& arguments, bool verbose = false) {
     auto config_and_command = GetConfigAndCommand(arguments);
 
     if (!config_and_command)
-        return false;
+        return -1;  // Not handled
 
-    auto ret = config_and_command->first.Run(config_and_command->second);
-    if (!ret.empty())
-        return true;
+    auto& [config, command, extra_args] = *config_and_command;
+    WebDashType::RunConfig run_config;
+    run_config.verbose = verbose;
+    auto ret = config.Run(command, run_config, extra_args);
+    if (!ret.empty()) {
+        // Check if any task failed
+        for (const auto& result : ret) {
+            if (result.return_code != 0) {
+                return result.return_code;
+            }
+        }
+        return 0;  // All succeeded
+    }
 
-    return false;
+    return -1;  // Not handled
 }
 
 
@@ -456,8 +498,9 @@ bool ConfigBased_Command(const vector<string>& arguments) {
  * @brief Takes a WebDash action based on the given arguments.
  * @param argc The number of arguments.
  * @param argv The arguments.
+ * @returns Exit code (0 for success, non-zero for failure).
  */
-void ExecuteUserInput(int argc, char **argv) {
+int ExecuteUserInput(int argc, char **argv) {
     size_t cmd_argument_count = argc;
     char** cmd_argument_values = argv;
 
@@ -482,33 +525,44 @@ void ExecuteUserInput(int argc, char **argv) {
 
     /**
      * Scope down the arguments to the ones that matter (i.e., exclude the 0-th).
+     * Also extract webdash-specific flags.
      */
 
     vector<string> arguments;
+    bool verbose = (getenv("WEBDASH_VERBOSE") != nullptr);  // Inherit from parent process
+
     for (size_t i = 1; i < cmd_argument_count; ++i) {
-        arguments.emplace_back(cmd_argument_values[i]);
+        string arg = cmd_argument_values[i];
+        if (arg == "--webdash-verbose") {
+            verbose = true;
+            // Set env var so forked processes also know
+            setenv("WEBDASH_VERBOSE", "1", 1);
+        } else {
+            arguments.emplace_back(arg);
+        }
     }
 
     /**
      * Non-config commands.
      */
 
-    if (ListRegistered_Command(arguments)) return;
-    if (CreateBuildInitializer_InternalCommand(arguments)) return;
-    if (CreateProjectCloner_InternalCommand(arguments)) return;
-    if (Register_Command(arguments)) return;
-    if (Unregister_Command(arguments)) return;
-    if (ReloadAll_Command(arguments)) return;
-    if (PingServer_Command(arguments)) return;
-    if (Help_Command(arguments)) return;
+    if (ListRegistered_Command(arguments)) return 0;
+    if (CreateBuildInitializer_InternalCommand(arguments)) return 0;
+    if (CreateProjectCloner_InternalCommand(arguments)) return 0;
+    if (Register_Command(arguments)) return 0;
+    if (Unregister_Command(arguments)) return 0;
+    if (ReloadAll_Command(arguments)) return 0;
+    if (PingServer_Command(arguments)) return 0;
+    if (Help_Command(arguments)) return 0;
 
     /**
      * Check commands that allow ancestry-based config determination.
      */
 
-    if (ListDefinitions_Command(arguments)) return;
+    if (ListDefinitions_Command(arguments)) return 0;
     // The MOST important handler for the USER:
-    if (ConfigBased_Command(arguments)) return;
+    int config_result = ConfigBased_Command(arguments, verbose);
+    if (config_result >= 0) return config_result;
 
     /**
      * Still not handled? Explain to the USER that it was **not possible** to take an action.
@@ -520,15 +574,22 @@ void ExecuteUserInput(int argc, char **argv) {
     auto configWithCommand = GetConfigAndCommand(arguments);
 
     if (configWithCommand.has_value()) {
-        cerr << endl << string(kSpaceOutGroup, ' ') << "From the selected WebDash config at '" << configWithCommand->first.GetPath() << "':" << endl;
-        vector<string> commands = WebDashList(configWithCommand->first.GetPath());
+        cerr << endl << string(kSpaceOutGroup, ' ') << "From the selected WebDash config at '" << std::get<0>(*configWithCommand).GetPath() << "':" << endl;
+        vector<string> commands = WebDashList(std::get<0>(*configWithCommand).GetPath());
 
         for (auto cmd : commands) {
             cerr << string(kSpaceOutCommands, ' ') << cmd << endl;
         }
     } else {
-        cerr << endl << string(kSpaceOutGroup, ' ') << "No '" << WebDashCore::GetProjectConfigFilename() << "' found in current directory." << endl;
-        cerr << string(kSpaceOutGroup, ' ') << "Run 'webdash --list-config' to see registered projects." << endl;
+        // Check if config file exists but failed to parse
+        auto config_path = std::filesystem::current_path() / WebDashCore::GetProjectConfigFilename();
+        if (std::filesystem::exists(config_path)) {
+            // Config exists but parsing must have failed - error was already printed
+            cerr << endl << string(kSpaceOutGroup, ' ') << "Fix the JSON syntax error in '" << WebDashCore::GetProjectConfigFilename() << "' and try again." << endl;
+        } else {
+            cerr << endl << string(kSpaceOutGroup, ' ') << "No '" << WebDashCore::GetProjectConfigFilename() << "' found in current directory." << endl;
+            cerr << string(kSpaceOutGroup, ' ') << "Run 'webdash --list-config' to see registered projects." << endl;
+        }
     }
 
     vector<string> commands = WebDashNativeCommands();
@@ -542,6 +603,7 @@ void ExecuteUserInput(int argc, char **argv) {
     }
 
     cerr << endl << string(kSpaceOutGroup, ' ') << "For more help: webdash --help" << endl;
+    return 1;  // No matching command found
 }
 
 
@@ -553,7 +615,7 @@ void ExecuteUserInput(int argc, char **argv) {
 int main(int argc, char **argv) {
 
     try {
-        ExecuteUserInput(argc, argv);
+        return ExecuteUserInput(argc, argv);
     } catch (WebDashException::NoWebDashRootFound& e) {
         // Specific handling for missing root config - common user error
         cerr << "\n";
@@ -601,6 +663,4 @@ int main(int argc, char **argv) {
         cerr << "\n";
         throw;
     }
-
-    return 0;
 }
