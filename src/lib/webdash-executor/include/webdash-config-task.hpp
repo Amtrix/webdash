@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <map>
 
 #include <nlohmann/json.hpp>
 
@@ -51,6 +52,7 @@ class WebDashConfigTask {
         string _taskid;
         std::optional<string> _frequency;
         vector<string> _actions;
+        vector<string> _actions_else;  // Actions to run when condition is false
         vector<WebDashType::Dependency> _dependencies;
         string _name;
         std::optional<string> _wdir;
@@ -81,9 +83,25 @@ class WebDashConfigTask {
 
         std::optional<string> _condition;  // Condition that must be true to run command
 
+        // Exit actions: map exit codes (or "*" for any non-zero) to actions and optional return override
+        // Key is exit code as string ("0", "1", etc.) or "*" for wildcard
+        struct ExitActionEntry {
+            vector<string> actions;
+            std::optional<int> return_override;  // If set, overrides the final exit code
+        };
+        std::map<string, ExitActionEntry> _exit_actions;
+
         /**
          * @brief Evaluates the condition string (e.g., $.isPortUnused(8080)).
          * @returns true if condition is satisfied or no condition set, false otherwise.
          */
         bool EvaluateCondition();
+
+        /**
+         * @brief Runs exit-actions based on the provided return code.
+         * @param exit_code The exit code from the main actions.
+         * @param config The run configuration.
+         * @returns Updated RunReturn with exit-action results.
+         */
+        WebDashType::RunReturn RunExitActions(int exit_code, WebDashType::RunConfig config);
 };

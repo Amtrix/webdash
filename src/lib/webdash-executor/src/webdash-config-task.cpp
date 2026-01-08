@@ -65,6 +65,24 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
         }
     }
 
+    // Parse actions-else (runs when condition is false)
+    try {
+        if (task_config.find("action-else") != task_config.end()) {
+            const string action = task_config["action-else"].get<std::string>();
+            this->_actions_else.push_back(action);
+        }
+    }
+    catch (...){}
+
+    try {
+        if (task_config.find("actions-else") != task_config.end()) {
+            json actions = task_config["actions-else"];
+            for (auto action : actions)
+                this->_actions_else.push_back(action.get<std::string>());
+        }
+    }
+    catch (...){}
+
     try {
         json dependencies = task_config["dependencies"];
 
@@ -176,6 +194,53 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
         // No condition specified - command runs unconditionally
     }
 
+    // Parse exit-actions: array of objects mapping exit codes to action lists
+    // Format: [{"0": ["action1", "action2"]}, {"*": ["on-failure-action"], "return": 0}]
+    try {
+        if (task_config.find("exit-actions") != task_config.end()) {
+            json exit_actions_json = task_config["exit-actions"];
+            if (exit_actions_json.is_array()) {
+                for (const auto& exit_action_obj : exit_actions_json) {
+                    if (exit_action_obj.is_object()) {
+                        // Check for optional "return" field
+                        std::optional<int> return_override;
+                        if (exit_action_obj.contains("return")) {
+                            return_override = exit_action_obj["return"].get<int>();
+                        }
+
+                        for (auto it = exit_action_obj.begin(); it != exit_action_obj.end(); ++it) {
+                            string code = it.key();
+                            // Skip the "return" key - it's not an exit code
+                            if (code == "return") continue;
+
+                            const auto& actions = it.value();
+                            if (actions.is_array()) {
+                                ExitActionEntry entry;
+                                for (const auto& action : actions) {
+                                    if (action.is_string()) {
+                                        entry.actions.push_back(action.get<std::string>());
+                                    }
+                                }
+                                entry.return_override = return_override;
+                                this->_exit_actions[code] = entry;
+                                WebDash().Log(WebDashType::LogType::DEBUG, 
+                                    "T| " + taskid + ": loaded exit-action for code '" + code + 
+                                    "' with " + std::to_string(entry.actions.size()) + " actions" +
+                                    (return_override.has_value() ? ", return=" + std::to_string(*return_override) : ""));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    catch (const std::exception& e) {
+        WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": failed to parse exit-actions: " + string(e.what()));
+    }
+    catch (...) {
+        WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": failed to parse exit-actions.");
+    }
+
     //
     // Apply all keyword substitutions.
     //
@@ -187,6 +252,10 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
         action = WebDashUtils::ApplySubstitutions(action, defs);
     }
 
+    for (auto& action : _actions_else) {
+        action = WebDashUtils::ApplySubstitutions(action, defs);
+    }
+
     for (auto& dependency : _dependencies) {
         dependency.path = WebDashUtils::ApplySubstitutions(dependency.path, defs);
         // git and branch don't need substitution (they're external URLs)
@@ -194,6 +263,13 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
 
     if (_wdir.has_value()) {
         _wdir = WebDashUtils::ApplySubstitutions(_wdir.value(), defs);
+    }
+
+    // Apply substitutions to exit-actions
+    for (auto& [code, entry] : _exit_actions) {
+        for (auto& action : entry.actions) {
+            action = WebDashUtils::ApplySubstitutions(action, defs);
+        }
     }
 
     // Note: _condition is evaluated at runtime, not substituted here
@@ -425,7 +501,35 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
     }
 
     // Check condition before executing
+    // If actions-else is defined but no condition, that's an error
+    if (!_actions_else.empty() && !_condition.has_value()) {
+        cerr << "ERROR: 'actions-else' defined without 'condition' in task: " << _taskid << endl;
+        ret.return_code = 1;
+        return ret;  // Do not go through exit-actions
+    }
+
     if (!EvaluateCondition()) {
+        // Condition is false - run actions-else if defined
+        if (!_actions_else.empty()) {
+            cout << "\033[1;33m-----------------" << endl;
+            cout << "  TASKID: " << _taskid << endl;
+            cout << "  CONDITION FALSE: " << _condition.value_or("(none)") << " - running actions-else" << endl;
+            cout << "-----------------\033[0m" << endl;
+
+            // Run actions-else (without exit-actions processing)
+            for (const string& action : _actions_else) {
+                auto ret_sub = Run(config, action);
+                ret.output += ret_sub.output;
+                ret.return_code |= ret_sub.return_code;
+
+                if (ret.return_code && !_continue_on_error) {
+                    return ret;  // Do not go through exit-actions
+                }
+            }
+            return ret;  // Do not go through exit-actions
+        }
+
+        // No actions-else defined, just skip
         cout << "\033[1;33m-----------------" << endl;
         cout << "  TASKID: " << _taskid << endl;
         cout << "  SKIPPED: Condition not satisfied: " << _condition.value_or("(none)") << endl;
@@ -672,7 +776,84 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
 
         if (ret.return_code && !_continue_on_error) {
             std::cerr << "ERROR: Action failed with exit code " << ret.return_code << ": " << action << std::endl;
-            return ret;
+            // Run exit-actions even on early failure
+            return RunExitActions(ret.return_code, effective_config);
+        }
+    }
+
+    // Run exit-actions based on final return code
+    return RunExitActions(ret.return_code, effective_config);
+}
+
+
+WebDashType::RunReturn WebDashConfigTask::RunExitActions(int exit_code, WebDashType::RunConfig config) {
+    WebDashType::RunReturn ret;
+    ret.return_code = exit_code;
+
+    // If no exit-actions defined, just return the original result
+    if (_exit_actions.empty()) {
+        return ret;
+    }
+
+    // Look for exact match first
+    string exit_code_str = std::to_string(exit_code);
+    ExitActionEntry* entry_to_run = nullptr;
+
+    if (_exit_actions.count(exit_code_str)) {
+        entry_to_run = &_exit_actions[exit_code_str];
+    }
+    // If no exact match and exit code is non-zero, try wildcard "*"
+    else if (exit_code != 0 && _exit_actions.count("*")) {
+        entry_to_run = &_exit_actions["*"];
+    }
+
+    if (entry_to_run == nullptr) {
+        return ret;
+    }
+
+    if (config.verbose) {
+        cout << "\033[1;36m--- Running exit-actions for exit code " << exit_code_str << " ---\033[0m" << endl;
+    }
+
+    for (const string& action : entry_to_run->actions) {
+        auto maybesubtask = config.TaskRetriever(action);
+
+        if (maybesubtask.has_value()) {
+            auto ret_sub = maybesubtask.value().Run(config);
+            ret.output += ret_sub.output;
+            // Don't modify the original return code from exit-actions
+        }
+        else {
+            // Execute as shell command
+            string effective_action = action;
+            bool is_cross_config_task = false;
+
+            if (action.size() > 2) {
+                bool starts_with_path = (action.substr(0, 2) == "./" ||
+                                         action.substr(0, 3) == "../" ||
+                                         action[0] == '/');
+                bool has_task_separator = action.find(':') != string::npos;
+
+                if (starts_with_path && has_task_separator) {
+                    is_cross_config_task = true;
+                }
+            }
+
+            if (is_cross_config_task) {
+                effective_action = "webdash " + action;
+            }
+
+            auto ret_sub = Run(config, effective_action);
+            ret.output += ret_sub.output;
+            // Don't modify the original return code from exit-actions
+        }
+    }
+
+    // Apply return override if specified
+    if (entry_to_run->return_override.has_value()) {
+        ret.return_code = entry_to_run->return_override.value();
+        if (config.verbose) {
+            cout << "\033[1;36m--- Exit code overridden to " << ret.return_code << " ---\033[0m" << endl;
         }
     }
 
