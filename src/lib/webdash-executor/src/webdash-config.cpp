@@ -105,6 +105,16 @@ namespace {
             }
 
             if (PathMatchesModule(module.destination, path_str)) {
+                // Check if the module destination already has a valid webdash.config.json
+                // If so, don't try to clone - the module is already set up, we just need
+                // to access a subdirectory that may not exist yet
+                std::filesystem::path dest_config = std::filesystem::path(module.destination) / WebDashConst::Public::kProjectConfigFilename;
+                if (std::filesystem::exists(dest_config)) {
+                    WebDash().Log(WebDashType::LogType::DEBUG,
+                        "Module already has valid config, skipping clone: " + module.destination);
+                    return true;  // Module exists, subdirectory access is up to caller
+                }
+
                 // Check if interactive clone is enabled
                 if (WebDashCore::Get().IsInteractiveCloneEnabled()) {
                     string prompt = "Module not found: " + module.destination + "\n"
