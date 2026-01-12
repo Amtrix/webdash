@@ -19,20 +19,12 @@
             "git": "git@github.com:Amtrix/src-static-wallpaper-tasks.git"
         },
         {
-            "path": "$.rootDir()/src/lib/webdash-executor",
-            "git": "git@github.com:Amtrix/src-lib-webdash-executor.git"
-        },
-        {
-            "path": "$.rootDir()/src/bin/_webdash/heartbeat",
-            "git": "git@github.com:Amtrix/src-bin-_webdash-heartbeat.git"
-        },
-        {
-            "path": "$.rootDir()/src/bin/_webdash/server",
-            "git": "git@github.com:Amtrix/src-bin-_webdash-server.git"
-        },
-        {
             "path": "$.rootDir()/src/bin/report-build-state",
             "git": "git@github.com:Amtrix/src-bin-report-build-state.git"
+        },
+        {
+            "path": "$.rootDir()/src/bin/_webdash/tests/clonedby-profile-dep",
+            "git": "git@github.com:Amtrix/src-bin-_webdash-tests-clonechk.git"
         }
     ],
     "dependencies": [
@@ -44,6 +36,25 @@
             "path": "$.rootDir()/src/lib/external/websocketpp",
             "git": "git@github.com:zaphoyd/websocketpp.git",
             "branch": "develop"
+        },
+        {
+            "path": "$.rootDir()/src/lib/external/android-sdk",
+            "actions": [
+                "curl -o cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip",
+                "unzip -q cmdline-tools.zip",
+                "mkdir -p cmdline-tools/latest",
+                "mv cmdline-tools/* cmdline-tools/latest/ 2>/dev/null || true",
+                "rm -f cmdline-tools.zip",
+                "yes | cmdline-tools/latest/bin/sdkmanager --licenses",
+                "cmdline-tools/latest/bin/sdkmanager 'platform-tools' 'platforms;android-34' 'build-tools;34.0.0'"
+            ]
+        },
+        {
+            "path": "$.rootDir()/src/bin/_webdash/tests/createby-profile-dep",
+            "wdir": "$.path()",
+            "actions": [
+                "[ -d $.path() ] || { echo 'FAIL: Directory was not created'; exit 1; }"
+            ]
         }
     ]
 }
