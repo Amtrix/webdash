@@ -1,0 +1,11 @@
+[Unit]
+Description=My custom program startup
+
+[Service]
+Type=simple
+ExecStart=placeholder_WEBDASH/app-persistent/bin/webdash placeholder_WEBDASH/src/bin/_webdash-server:start
+EnvironmentFile=placeholder_WEBDASH/src/bin/_webdash-server/systemd-config/webdash-server.service.env
+WorkingDirectory=placeholder_WEBDASH
+
+[Install]
+WantedBy=default.target

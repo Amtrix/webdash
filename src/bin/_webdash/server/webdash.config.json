@@ -1,0 +1,87 @@
+{
+    "commands": [
+        {
+            "name": "install",
+            "action": "bash install.sh",
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "build",
+            "actions": [
+                "rm -f build/webdash-server",
+                "mkdir -p build",
+                "cmake -B./build -H./ -S./",
+                "make -C build"
+            ],
+            "dependencies": [
+                "$.rootDir()/src/lib/_webdash/executor:build",
+                "$.rootDir()/src/bin/_webdash/heartbeat:build"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "install-debug",
+            "action": "bash install-debug.sh",
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "build-debug",
+            "action": "make -C build-debug"
+        },
+        {
+            "name": "build-debug",
+            "action": "make -C build-debug"
+        },
+        {
+            "name": "start",
+            "action": "$.rootDir()/app-persistent/bin/_webdash/webdash-server"
+        },
+        {
+            "name": "stop",
+            "action": "pkill webdash-server -2"
+        },
+        {
+            "name": "clean",
+            "action": "rm -rf build"
+        },
+        {
+            "name": "all",
+            "actions": [
+                ":clean",
+                ":build",
+                ":install"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "status",
+            "actions": [
+                "echo 'pid of webdash='",
+                "pidof webdash-server"
+            ],
+            "verbosity": 0
+        },
+        {
+            "name": "systemd",
+            "actions": [
+                "./webdash-server.service.setup.sh",
+                "sudo mkdir -p /lib/systemd/system/default.target.wants",
+                "sudo cp webdash-server.service /lib/systemd/system/default.target.wants/",
+                "sudo cp webdash-server.service /lib/systemd/system/",
+                "sudo systemctl daemon-reload",
+                "sudo systemctl start webdash-server.service",
+                "sudo systemctl restart webdash-server.service",
+                "sudo systemctl start webdash-server.service",
+                "sudo systemctl enable webdash-server.service"
+            ],
+            "wdir": "$.thisDir()/systemd-config"
+        },
+        {
+            "name": "restart",
+            "actions": [
+                "sudo systemctl restart webdash-server.service"
+            ],
+            "wdir": "$.thisDir()"
+        }
+    ]
+}

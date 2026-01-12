@@ -5,8 +5,6 @@
 !/src/bin/
 /src/bin/*
 !/src/bin/_webdash/
-/src/bin/_webdash/*
-!/src/bin/_webdash/client/
 
 !/src/lib/
 /src/lib/*

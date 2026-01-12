@@ -1,0 +1,155 @@
+{
+    "dependencies": [
+        "$.rootDir()/src/bin/_webdash/tests/createby-profile-dep",
+        "$.rootDir()/src/bin/_webdash/tests/clonedby-profile-dep"
+    ],
+    "commands": [
+        {
+            "name": "test-success-dependency",
+            "actions": [
+                "test -d $.rootDir()/src/bin/_webdash/tests/createby-profile-dep",
+                "test -d $.rootDir()/src/bin/_webdash/tests/clonedby-profile-dep",
+                "echo 'Test [passed]: Dependencies exist/created.'"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "cleanup",
+            "actions": [
+                "rm -rf $.rootDir()/src/bin/_webdash/tests/createby-profile-dep",
+                "rm -rf $.rootDir()/src/bin/_webdash/tests/clonedby-profile-dep",
+                "rm -f $.thisDir()/dummy-test-file.txt",
+                "echo 'Cleanup completed.'"
+            ]
+        },
+        {
+            "name": "test-rootdir-value",
+            "actions": [
+                "echo Testing webdash.rootDir value: $#.webdash.rootDir",
+                "bash -c '[ $#.webdash.rootDir = this ] || exit 1'",
+                "echo Test [passed]: webdash.rootDir is this"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "dependencies"
+        },
+        {
+            "name": "create-dummy-test-file",
+            "action": "echo 'This is a dummy test file.' > $.thisDir()/dummy-test-file.txt",
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "test-action-dependency",
+            "actions": [
+                "test -f $.thisDir()/dummy-test-file.txt",
+                "echo 'Test [passed]: Action-created file exists.'"
+            ],
+            "dependencies": [
+                ":create-dummy-test-file"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            ".comment": "Tests for the heartbeat module. Will update log file.",
+            "name": "test-heartbeat-binary",
+            "actions": [
+                "webdash-heartbeat | grep -q 'Heartbeat:'",
+                "echo 'Test [passed]: Heartbeat binary responds.'"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "test-heartbeat-log",
+            "actions": [
+                "last_log=$(tail -1 $.rootDir()/app-temporary/logging/webdash-heartbeat/logging.info.txt | grep -oP '\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}' | head -1) && log_epoch=$(date -d \"$last_log\" +%s) && now_epoch=$(date +%s) && diff=$((now_epoch - log_epoch)) && [ $diff -lt 3600 ] && [ $diff -ge 0 ]",
+                "echo 'Test [passed]: Heartbeat log entry is within the last hour.'"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "condition-port-pass",
+            "condition": "$.isPortUnused(65535)",
+            "actions": [
+                "echo 'Test [passed]: Port 65535 unused as expected.'"
+            ]
+        },
+        {
+            "name": "condition-port-used",
+            "condition": "!$.isPortUnused(22)",
+            "actions": [
+                "echo 'Test [passed]: Port 22 used as expected (condition negation).'"
+            ],
+            "actions-else": [
+                "echo 'Test [failed]: Port 22 is unused, but expected to be used.'",
+                "exit 1"
+            ]
+        },
+        {
+            "name": "condition-port-used-fail",
+            "condition": "$.isPortUnused(22)",
+            "actions": [
+                "echo 'Test [failed]: Port 22 is unused, but expected to be used.'",
+                "exit 1"
+            ],
+            "actions-else": [
+                "echo 'Test [passed]: Port 22 used as expected (condition negation).'"
+            ]
+        },
+        {
+            "name": "failed-command",
+            "actions": [
+                "ech o'This should fail.'"
+            ],
+            "exit-actions": [
+                {
+                    "0": [
+                        "echo 'Test [failed]: failed-command exited with zero.'"
+                    ],
+                    "return": 1
+                },
+                {
+                    "*": [
+                        "echo 'Test [passed]: failed-command exited with non-zero as expected.'"
+                    ],
+                    "return": 0
+                }
+            ]
+        },
+        {
+            "name": "all",
+            "actions": [
+                ":test-success-dependency",
+                ":test-rootdir-value",
+                ":test-action-dependency",
+                ":test-heartbeat-log",
+                "webdash :condition-port-pass",
+                "webdash condition-port-used",
+                "webdash condition-port-used-fail",
+                ":failed-command",
+                "./clonedby-profile-dep:all"
+            ],
+            "exit-actions": [
+                {
+                    "0": [
+                        "echo 'All tests completed successfully. Performing cleanup:'",
+                        ":cleanup"
+                    ]
+                },
+                {
+                    "*": [
+                        "echo 'Some test(s) failed. Performing cleanup:'",
+                        ":cleanup"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "all_no-cleanup",
+            "actions": [
+                ":test-success-dependency",
+                ":test-rootdir-value"
+            ]
+        }
+    ]
+}

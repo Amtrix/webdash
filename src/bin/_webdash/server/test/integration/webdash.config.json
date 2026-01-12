@@ -1,0 +1,8 @@
+{
+    "commands": [
+        {
+            "name": "run_test.1",
+            "action": "echo $(date +'%T')"
+        }
+    ]
+}

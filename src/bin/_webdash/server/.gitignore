@@ -1,0 +1,5 @@
+.vscode/
+build/
+build-debug/
+systemd-config/webdash-server.service.env
+systemd-config/webdash-server.service
