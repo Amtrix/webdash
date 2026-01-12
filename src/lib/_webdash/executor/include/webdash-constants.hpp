@@ -133,6 +133,7 @@ namespace Public {
     constexpr char kModuleFieldAction[] = "action";    // Single action command (alternative to actions array)
     constexpr char kModuleFieldActions[] = "actions";  // WebDash task to run for setup (alternative to git)
     constexpr char kModuleFieldWdir[] = "wdir";        // Working directory for actions (supports $.path())
+    constexpr char kModuleFieldProjectLocation[] = "project-location";  // Path where project declares it should be installed
 
 
     // =========================================================================
