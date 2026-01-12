@@ -6,6 +6,11 @@ if(POLICY CMP0167)
   cmake_policy(SET CMP0167 OLD)
 endif()
 
+# Output dirs - must be set BEFORE add_library
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "$ENV{WEBDASH}/app-persistent/lib")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "$ENV{WEBDASH}/app-persistent/lib")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "$ENV{WEBDASH}/app-persistent/lib")
+
 # Prefer config packages (BoostConfig.cmake); required for CMake >= 3.30.
 find_package(Boost REQUIRED COMPONENTS system filesystem)
 
@@ -17,11 +22,6 @@ target_sources(webdash-executor PRIVATE
   src/webdash-core.cpp
   src/webdash-utils.cpp
 )
-
-# Output dirs
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "$ENV{WEBDASH}/app-persistent/lib")
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "$ENV{WEBDASH}/app-persistent/lib")
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "$ENV{WEBDASH}/app-persistent/lib")
 
 set(EXTERNAL_LIB_PATH "$ENV{WEBDASH}/src/lib/external")
 
