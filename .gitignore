@@ -4,13 +4,15 @@
 
 !/src/bin/
 /src/bin/*
-!/src/bin/_webdash-client/
+!/src/bin/_webdash/
+/src/bin/_webdash/*
+!/src/bin/_webdash/client/
 
 !/src/lib/
 /src/lib/*
-!/src/lib/webdash-executor/
+!/src/lib/_webdash/
 
-!/src/bin/_webdash-client/webdash.config.json
+!/src/bin/_webdash/client/webdash.config.json
 !/data/setup-webdash.sh
 !/data/WebDash.xml
 !/.gitignore

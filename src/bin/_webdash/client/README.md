@@ -29,4 +29,4 @@
     ]
 }</code></pre>
 
-<h3>Log output: <code>/app-temporary/logging/_webdash-client</code></h3>
+<h3>Log output: <code>/app-temporary/logging/webdash-client</code></h3>

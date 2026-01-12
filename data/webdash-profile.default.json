@@ -23,11 +23,11 @@
             "git": "git@github.com:Amtrix/src-lib-webdash-executor.git"
         },
         {
-            "path": "$.rootDir()/src/bin/_webdash-heartbeat",
+            "path": "$.rootDir()/src/bin/_webdash/heartbeat",
             "git": "git@github.com:Amtrix/src-bin-_webdash-heartbeat.git"
         },
         {
-            "path": "$.rootDir()/src/bin/_webdash-server",
+            "path": "$.rootDir()/src/bin/_webdash/server",
             "git": "git@github.com:Amtrix/src-bin-_webdash-server.git"
         },
         {

@@ -223,8 +223,8 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
                                 }
                                 entry.return_override = return_override;
                                 this->_exit_actions[code] = entry;
-                                WebDash().Log(WebDashType::LogType::DEBUG, 
-                                    "T| " + taskid + ": loaded exit-action for code '" + code + 
+                                WebDash().Log(WebDashType::LogType::DEBUG,
+                                    "T| " + taskid + ": loaded exit-action for code '" + code +
                                     "' with " + std::to_string(entry.actions.size()) + " actions" +
                                     (return_override.has_value() ? ", return=" + std::to_string(*return_override) : ""));
                             }

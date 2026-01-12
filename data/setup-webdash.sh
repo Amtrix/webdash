@@ -40,7 +40,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 WEBDASH_ROOT="$(realpath "$SCRIPT_DIR/..")"
 
 # C++ header that defines canonical constants (single source of truth).
-CPP_CONSTANTS_HEADER="$WEBDASH_ROOT/src/lib/webdash-executor/include/webdash-constants.hpp"
+CPP_CONSTANTS_HEADER="$WEBDASH_ROOT/src/lib/_webdash/executor/include/webdash-constants.hpp"
 
 # Extract canonical filenames from C++ header to avoid duplication.
 # Why: The C++ library is the source of truth for these constants.
@@ -278,17 +278,17 @@ main() {
     #      It provides config parsing, path resolution, logging, etc.
     #      MUST be built before the client.
     # -------------------------------------------------------------------------
-    build_cmake_project "$WEBDASH/src/lib/webdash-executor" "WebDash Executor Library"
+    build_cmake_project "$WEBDASH/src/lib/_webdash/executor" "WebDash Executor Library"
 
     # -------------------------------------------------------------------------
     # Step 4: Build and Install WebDash Client
     # Why: The 'webdash' CLI binary that users interact with.
     #      Links against the executor library built above.
     # -------------------------------------------------------------------------
-    build_cmake_project "$WEBDASH/src/bin/_webdash-client" "WebDash Client"
+    build_cmake_project "$WEBDASH/src/bin/_webdash/client" "WebDash Client"
 
     log_info "Installing WebDash client to app-persistent/bin..."
-    pushd "$WEBDASH/src/bin/_webdash-client" > /dev/null
+    pushd "$WEBDASH/src/bin/_webdash/client" > /dev/null
     chmod +x install.sh
     ./install.sh
     popd > /dev/null
@@ -336,13 +336,13 @@ main() {
     # -------------------------------------------------------------------------
     if [[ "$WEBDASH_TEST_MODE" == "true" ]]; then
         log_info "[TEST MODE] Building WebDash Server (skipping install/systemd)..."
-        if ! "$WEBDASH/app-persistent/bin/webdash" "$WEBDASH/src/bin/_webdash-server:build"; then
+        if ! "$WEBDASH/app-persistent/bin/webdash" "$WEBDASH/src/bin/_webdash/server:build"; then
             log_error "Failed to build WebDash server"
             show_recent_errors
             exit 1
         fi
         # Verify the binary was actually created
-        if [[ ! -f "$WEBDASH/src/bin/_webdash-server/build/webdash-server" ]]; then
+        if [[ ! -f "$WEBDASH/src/bin/_webdash/server/build/webdash-server" ]]; then
             log_error "WebDash server build failed - binary not found"
             show_recent_errors
             exit 1
@@ -350,9 +350,9 @@ main() {
         log_success "WebDash server built (not installed in test mode)"
     else
         log_info "Building and starting WebDash Server..."
-        if ! "$WEBDASH/app-persistent/bin/webdash" "$WEBDASH/src/bin/_webdash-server:all"; then
+        if ! "$WEBDASH/app-persistent/bin/webdash" "$WEBDASH/src/bin/_webdash/server:all"; then
             log_error "Failed to build/start WebDash server"
-            log_warn "You can try manually later: webdash \$WEBDASH/src/bin/_webdash-server:all"
+            log_warn "You can try manually later: webdash \$WEBDASH/src/bin/_webdash/server:all"
         else
             log_success "WebDash server started"
         fi
