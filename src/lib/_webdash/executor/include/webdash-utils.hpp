@@ -188,4 +188,17 @@ namespace WebDashUtils {
      * @returns Vector of tokens with quotes removed and escapes processed.
      **/
     vector<string> TokenizeCommand(const string& command);
+
+
+    /**
+     * @brief Resolves $.port(identifier) patterns in a string by looking up
+     *        the port value from the profile's "ports" section.
+     *
+     * @param source The string containing $.port() patterns to resolve.
+     * @param profile_entries The list of profile entries to look up ports from.
+     * @returns The string with $.port() patterns replaced with actual port values.
+     **/
+    string ResolvePortReferences(
+        const string& source,
+        const vector<JsonEntry>& profile_entries);
 }

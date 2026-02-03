@@ -187,6 +187,12 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
     }
 
     try {
+        const bool val = task_config["background"].get<bool>();
+        this->_background = val;
+    }
+    catch (...) {}
+
+    try {
         const string condition = task_config["condition"].get<std::string>();
         this->_condition = condition;
     }
@@ -246,14 +252,18 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
     //
 
     auto defs = config->GetProfileConfigSubtitutions();
+    const auto& profile_entries = WebDashCore::Get().GetKeyValuesFromRootProfile();
+
     _name = WebDashUtils::ApplySubstitutions(_name, defs);
 
     for (auto& action : _actions) {
         action = WebDashUtils::ApplySubstitutions(action, defs);
+        action = WebDashUtils::ResolvePortReferences(action, profile_entries);
     }
 
     for (auto& action : _actions_else) {
         action = WebDashUtils::ApplySubstitutions(action, defs);
+        action = WebDashUtils::ResolvePortReferences(action, profile_entries);
     }
 
     for (auto& dependency : _dependencies) {
@@ -269,6 +279,7 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
     for (auto& [code, entry] : _exit_actions) {
         for (auto& action : entry.actions) {
             action = WebDashUtils::ApplySubstitutions(action, defs);
+            action = WebDashUtils::ResolvePortReferences(action, profile_entries);
         }
     }
 
@@ -379,6 +390,35 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
     if (pid == 0) {
 
         /**
+         * For background processes, do a double-fork to fully detach from parent.
+         * This prevents zombie processes and allows the parent to exit immediately.
+         */
+        if (_background) {
+            // Create new session so child is not killed when parent terminal closes
+            setsid();
+
+            // Second fork - grandchild becomes the actual background process
+            pid_t pid2 = fork();
+            if (pid2 > 0) {
+                // First child exits immediately
+                _exit(0);
+            } else if (pid2 < 0) {
+                perror("second fork");
+                _exit(1);
+            }
+            // Grandchild continues below to exec the command
+
+            // Redirect stdin/stdout/stderr to /dev/null for background process
+            int devnull = open("/dev/null", O_RDWR);
+            if (devnull >= 0) {
+                dup2(devnull, STDIN_FILENO);
+                dup2(devnull, STDOUT_FILENO);
+                dup2(devnull, STDERR_FILENO);
+                if (devnull > STDERR_FILENO) close(devnull);
+            }
+        }
+
+        /**
          * Change the CWD if required by the task.
          */
 
@@ -473,10 +513,20 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
     /**
      * Wait for child to finish before exiting. Return the object containing the
      * processing result (e.g., status code of executed processes).
+     *
+     * For background processes, we still wait for the first child (which exits
+     * immediately after double-forking), but we don't wait for the grandchild.
+     * This prevents zombie processes.
      */
 
     int status;
-    const pid_t wpid = waitpid(pid, &status, 0);
+    const pid_t wpid = waitpid(pid, &status, 0);  // Always reap the first child
+
+    if (_background) {
+        // Background process - first child already exited, grandchild is running detached
+        retval.return_code = 0;
+        return retval;
+    }
 
     retval.return_code = wpid == pid &&
                             WIFEXITED(status) ? WEXITSTATUS(status) : -1;
@@ -875,7 +925,7 @@ bool WebDashConfigTask::EvaluateCondition() {
         cond = cond.substr(1);
     }
 
-    // Parse $.isPortUnused(<port>)
+    // Parse $.isPortUnused(<port_or_identifier>)
     const string prefix = "$.isPortUnused(";
     if (cond.find(prefix) == 0 && cond.back() == ')') {
         string port_str = cond.substr(prefix.length(), cond.length() - prefix.length() - 1);
@@ -883,18 +933,49 @@ bool WebDashConfigTask::EvaluateCondition() {
         // Remove any whitespace
         port_str.erase(remove_if(port_str.begin(), port_str.end(), ::isspace), port_str.end());
 
-        try {
-            int port = std::stoi(port_str);
-            if (port < 1 || port > 65535) {
-                WebDash().Log(WebDashType::LogType::ERR, "Invalid port number in condition: " + port_str);
+        int port = -1;
+
+        // Check if it's a profile port reference: $.port(identifier)
+        const string port_prefix = "$.port(";
+        if (port_str.find(port_prefix) == 0 && port_str.back() == ')') {
+            string port_id = port_str.substr(port_prefix.length(), port_str.length() - port_prefix.length() - 1);
+
+            // Look up in profile under "ports.<identifier>"
+            const auto& entries = WebDashCore::Get().GetKeyValuesFromRootProfile();
+            bool found = false;
+            for (const auto& entry : entries) {
+                const auto& tokens = entry.GetTokens();
+                if (tokens.size() == 2 && tokens[0] == "ports" && tokens[1] == port_id) {
+                    try {
+                        port = std::stoi(entry.GetValue());
+                        found = true;
+                        break;
+                    } catch (...) {
+                        WebDash().Log(WebDashType::LogType::ERR, "Invalid port value in profile for: " + port_id);
+                        return false;
+                    }
+                }
+            }
+            if (!found) {
+                WebDash().Log(WebDashType::LogType::ERR, "Port identifier not found in profile: " + port_id);
                 return false;
             }
-            bool result = WebDashUtils::IsPortUnused(port);
-            return negate ? !result : result;
-        } catch (...) {
-            WebDash().Log(WebDashType::LogType::ERR, "Failed to parse port number in condition: " + port_str);
+        } else {
+            // Try to parse as literal number
+            try {
+                port = std::stoi(port_str);
+            } catch (...) {
+                WebDash().Log(WebDashType::LogType::ERR, "Failed to parse port number in condition: " + port_str);
+                return false;
+            }
+        }
+
+        if (port < 1 || port > 65535) {
+            WebDash().Log(WebDashType::LogType::ERR, "Invalid port number in condition: " + to_string(port));
             return false;
         }
+        bool result = WebDashUtils::IsPortUnused(port);
+        return negate ? !result : result;
     }
 
     WebDash().Log(WebDashType::LogType::ERR, "Unknown condition: " + cond);

@@ -81,6 +81,8 @@ class WebDashConfigTask {
 
         bool _allow_execution_as_ancestor = false;
 
+        bool _background = false;  // If true, run command in background (don't wait for completion)
+
         std::optional<string> _condition;  // Condition that must be true to run command
 
         // Exit actions: map exit codes (or "*" for any non-zero) to actions and optional return override

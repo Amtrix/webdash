@@ -198,6 +198,52 @@ namespace WebDashUtils {
     }
 
 
+    string ResolvePortReferences(
+            const string& source,
+            const vector<JsonEntry>& profile_entries) {
+
+        string result = source;
+        const string port_prefix = "$.port(";
+
+        size_t pos = 0;
+        while ((pos = result.find(port_prefix, pos)) != string::npos) {
+            size_t end_pos = result.find(')', pos);
+            if (end_pos == string::npos) {
+                // No closing paren found, skip this occurrence
+                pos += port_prefix.length();
+                continue;
+            }
+
+            // Extract the identifier between $.port( and )
+            string port_id = result.substr(pos + port_prefix.length(),
+                                           end_pos - pos - port_prefix.length());
+
+            // Look up in profile under "ports.<identifier>"
+            string port_value;
+            bool found = false;
+            for (const auto& entry : profile_entries) {
+                const auto& tokens = entry.GetTokens();
+                if (tokens.size() == 2 && tokens[0] == "ports" && tokens[1] == port_id) {
+                    port_value = entry.GetValue();
+                    found = true;
+                    break;
+                }
+            }
+
+            if (found) {
+                // Replace $.port(identifier) with the port value
+                result.replace(pos, end_pos - pos + 1, port_value);
+                // Don't advance pos, in case there are nested or adjacent patterns
+            } else {
+                // Not found, skip past this pattern
+                pos = end_pos + 1;
+            }
+        }
+
+        return result;
+    }
+
+
     string ApplySubstitutions(
             const string& source,
             const vector<SubstitutionPair>& substitutions) {

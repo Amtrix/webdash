@@ -17,3 +17,7 @@
 
 # Temporary files (logs, caches, test artifacts)
 /app-temporary/
+
+# Python cache
+__pycache__/
+*.pyc
