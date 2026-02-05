@@ -200,6 +200,22 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
         // No condition specified - command runs unconditionally
     }
 
+    try {
+        const string style = task_config["executionStyle"].get<std::string>();
+        if (style == "stopOnFirstSuccess") {
+            this->_execution_style = ExecutionStyle::StopOnFirstSuccess;
+        } else if (style == "neverStop") {
+            this->_execution_style = ExecutionStyle::NeverStop;
+        } else if (style == "stopOnFirstFailure") {
+            this->_execution_style = ExecutionStyle::StopOnFirstFailure;
+        } else {
+            WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": unknown executionStyle '" + style + "', using default.");
+        }
+    }
+    catch (...) {
+        // No executionStyle specified - use default (StopOnFirstFailure)
+    }
+
     // Parse exit-actions: array of objects mapping exit codes to action lists
     // Format: [{"0": ["action1", "action2"]}, {"*": ["on-failure-action"], "return": 0}]
     try {
@@ -390,6 +406,13 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
     if (pid == 0) {
 
         /**
+         * Reset SIGCHLD to default behavior. The parent process (e.g., webdash-server)
+         * may have set SIGCHLD to SIG_IGN which would break the double-fork pattern
+         * and cause child processes to be reaped incorrectly.
+         */
+        signal(SIGCHLD, SIG_DFL);
+
+        /**
          * For background processes, do a double-fork to fully detach from parent.
          * This prevents zombie processes and allows the parent to exit immediately.
          */
@@ -517,10 +540,21 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
      * For background processes, we still wait for the first child (which exits
      * immediately after double-forking), but we don't wait for the grandchild.
      * This prevents zombie processes.
+     *
+     * Note: If SIGCHLD is set to SIG_IGN (e.g., in webdash-server), children are
+     * auto-reaped and waitpid() may return -1 with ECHILD. This is not an error.
      */
 
-    int status;
-    const pid_t wpid = waitpid(pid, &status, 0);  // Always reap the first child
+    int status = 0;
+    const pid_t wpid = waitpid(pid, &status, 0);
+
+    // Handle case where child was auto-reaped (SIGCHLD=SIG_IGN)
+    if (wpid == -1 && errno == ECHILD) {
+        // Child was already reaped, assume success for background tasks
+        // For non-background tasks, we can't know the exit status
+        retval.return_code = _background ? 0 : 0;  // Assume success
+        return retval;
+    }
 
     if (_background) {
         // Background process - first child already exited, grandchild is running detached
@@ -789,10 +823,12 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
         const string action = _actions[i];
         auto maybesubtask = effective_config.TaskRetriever(action);
 
+        int action_return_code = 0;
+
         if (maybesubtask.has_value()) {
             auto ret_sub = maybesubtask.value().Run(effective_config);
             ret.output += ret_sub.output;
-            ret.return_code |= ret_sub.return_code;
+            action_return_code = ret_sub.return_code;
         }
         else {
             // Check if this looks like a cross-config webdash task reference
@@ -821,14 +857,39 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
 
             auto ret_sub = Run(effective_config, effective_action);
             ret.output += ret_sub.output;
-            ret.return_code |= ret_sub.return_code;
+            action_return_code = ret_sub.return_code;
         }
 
-        if (ret.return_code && !_continue_on_error) {
-            std::cerr << "ERROR: Action failed with exit code " << ret.return_code << ": " << action << std::endl;
-            // Run exit-actions even on early failure
-            return RunExitActions(ret.return_code, effective_config);
+        // Handle execution style
+        switch (_execution_style) {
+            case ExecutionStyle::StopOnFirstFailure:
+                ret.return_code |= action_return_code;
+                if (action_return_code && !_continue_on_error) {
+                    std::cerr << "ERROR: Action failed with exit code " << action_return_code << ": " << action << std::endl;
+                    return RunExitActions(ret.return_code, effective_config);
+                }
+                break;
+
+            case ExecutionStyle::StopOnFirstSuccess:
+                if (action_return_code == 0) {
+                    // Success! We're done.
+                    ret.return_code = 0;
+                    return RunExitActions(ret.return_code, effective_config);
+                }
+                // Keep track of the last failure code
+                ret.return_code = action_return_code;
+                break;
+
+            case ExecutionStyle::NeverStop:
+                ret.return_code |= action_return_code;
+                // Continue regardless of success/failure
+                break;
         }
+    }
+
+    // For StopOnFirstSuccess, if we get here, all actions failed
+    if (_execution_style == ExecutionStyle::StopOnFirstSuccess && ret.return_code != 0) {
+        std::cerr << "ERROR: All actions failed" << std::endl;
     }
 
     // Run exit-actions based on final return code

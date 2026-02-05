@@ -324,7 +324,7 @@ private:
 
 int ConnectEndpoint(websocket_endpoint *endpoint)
 {
-    int id = endpoint->connect("ws://localhost:9154");
+    int id = endpoint->connect("ws://localhost:9002");
 
     if (id == -1) throw std::runtime_error("Error creating connection.");
 
@@ -387,7 +387,13 @@ void WebDashReloadAll()
 {
     websocket_endpoint endpoint;
     int id = ConnectEndpoint(&endpoint);
-    endpoint.send(id, "reload *");
+    endpoint.sendAndWaitForResponse(id, "reload", "*", [&](string resp)
+    {
+        auto parsed_resp = json::parse(resp);
+
+        for (string elem : parsed_resp)
+            cout << "   [OK] " << elem << endl;
+    });
 }
 
 
@@ -412,7 +418,7 @@ void WebDashConfigList()
 
     int id = ConnectEndpoint(&endpoint);
 
-    endpoint.sendAndWaitForResponse(id, "list-config", "*", [&](string resp)
+    endpoint.sendAndWaitForResponse(id, "list-registered-configs", "*", [&](string resp)
     {
         auto parsed_resp = json::parse(resp);
 

@@ -15,7 +15,7 @@ WebDash is a command runner that lets you define, share, and execute project com
 | Chain dependencies | `"dependencies": [":lib-build", "../util:compile"]` |
 | Manage environment | One profile sets PATH, env vars, git repos |
 | Schedule tasks | `"frequency": "daily"` runs automatically |
-| Discover projects | `webdash --list-config` shows everything |
+| Discover projects | `webdash --list-registered-configs` shows everything |
 
 ---
 
@@ -46,7 +46,7 @@ webdash all            # Run everything
 
 # See what's available:
 webdash --help         # Show help
-webdash --list-config  # List all registered projects
+webdash --list-registered-configs  # List all registered projects
 ```
 
 ---
@@ -144,8 +144,34 @@ This reads `webdash.config.json` from that path and runs the `build` command.
 | `frequency` | `"daily"` | Run at most once per 24 hours |
 | `frequency` | `"5000"` | Run at most once per 5000 milliseconds |
 | `when` | `"new-day"` | Only trigger when the calendar day changes |
+| `condition` | `"$.isPortUnused(...)"` | Only run if condition is true |
 
 Commands with `frequency` set are **only** executed by the server's scheduler — they won't run when you manually call `webdash <command>`.
+
+### Condition Functions
+
+Use these in the `condition` field to control when scheduled commands run:
+
+| Function | Description |
+|----------|-------------|
+| `$.isPortUnused(<port>)` | True if no process is listening on the port |
+| `$.port(<identifier>)` | Resolves to port number from `ports.<identifier>` in profile |
+
+### Example: Auto-Start Server
+
+Keep a server running automatically — if it dies, the scheduler restarts it:
+
+```json
+{
+    "name": "ensure-server",
+    "action": "webdash $.thisDir():start-server",
+    "condition": "$.isPortUnused($.port(my-server-port))",
+    "frequency": "60000",
+    "wdir": "$.thisDir()"
+}
+```
+
+With `ports.my-server-port: "8080"` in your profile, this checks every 60 seconds if port 8080 is unused, and starts the server if so.
 
 ### Example: Daily Build Report
 
@@ -161,9 +187,24 @@ Commands with `frequency` set are **only** executed by the server's scheduler �
 
 This command runs once per day (on the first check after midnight) and reports the build status.
 
+### Background Processes
+
+Use `"background": true` to run a command as a detached daemon process:
+
+```json
+{
+    "name": "start-server",
+    "action": "python3 server.py",
+    "background": true,
+    "wdir": "$.thisDir()"
+}
+```
+
+The process continues running after webdash exits, and won't create zombie processes.
+
 ### Other Registration Benefits
 
-- See all registered projects: `webdash --list-config`
+- See all registered projects: `webdash --list-registered-configs`
 - Reload configs after changes: `webdash --reload-all`
 
 ---
@@ -175,7 +216,7 @@ This command runs once per day (on the first check after midnight) and reports t
 | `webdash <command>` | Run command from `./webdash.config.json` |
 | `webdash /path:command` | Run command from a specific project |
 | `webdash --help` or `-h` | Show help |
-| `webdash --list-config` | List all registered projects |
+| `webdash --list-registered-configs` | List all registered projects |
 | `webdash --register` | Register current directory's project |
 | `webdash --unregister` | Unregister current directory's project |
 | `webdash --reload-all` | Reload all project configurations |
@@ -390,7 +431,7 @@ webdash build    # Works whether it's C++, Node.js, Rust, or Python underneath
 | Environment | Manual PATH/env setup | Auto-loaded from profile |
 | Dependencies | Shell scripts or CI-only | `"dependencies": [":build"]` |
 | Cross-project | Complex Makefiles | `"dependencies": ["../lib:build"]` |
-| Discovery | Remember all paths | `webdash --list-config` |
+| Discovery | Remember all paths | `webdash --list-registered-configs` |
 | Scheduling | Cron + scattered configs | Inline `"frequency": "daily"` |
 
 ### Design Philosophy

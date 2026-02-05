@@ -7,7 +7,7 @@
   <li><code>webdash $#.build // to use definitions from webdash-profile.json</code></li>
   <li><code>webdash -register // to register the current directory to the server</code></li>
   <li><code>webdash -list // to list the available commands from the current directory</code></li>
-  <li><code>webdash -list-config // to list <it>all</it> registered configs</code></li>
+  <li><code>webdash -list-registered-configs // to list <it>all</it> registered configs</code></li>
 </ul>
 
 <h3>How to design webdash.config.json</h3>

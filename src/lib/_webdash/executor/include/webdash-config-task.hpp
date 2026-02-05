@@ -15,6 +15,16 @@ using namespace std::chrono;
 
 
 /**
+ * @enum Execution style for multiple actions.
+ */
+enum class ExecutionStyle {
+    StopOnFirstFailure,  // Default: stop when any action fails
+    StopOnFirstSuccess,  // Stop when any action succeeds (useful for fallback chains)
+    NeverStop            // Run all actions regardless of success/failure
+};
+
+
+/**
  * @class Representative of a single webdash task from within a config file.
  */
 class WebDashConfigTask {
@@ -84,6 +94,8 @@ class WebDashConfigTask {
         bool _background = false;  // If true, run command in background (don't wait for completion)
 
         std::optional<string> _condition;  // Condition that must be true to run command
+
+        ExecutionStyle _execution_style = ExecutionStyle::StopOnFirstFailure;
 
         // Exit actions: map exit codes (or "*" for any non-zero) to actions and optional return override
         // Key is exit code as string ("0", "1", etc.) or "*" for wildcard

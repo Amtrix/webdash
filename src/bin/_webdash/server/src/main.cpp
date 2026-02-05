@@ -227,9 +227,15 @@ int execute_main()
         // Reloads all configs. Useful to get any changes take effect.
         //
 
-        if (cmd == "reload" && payload == "*") {
+        if (cmd.substr(0, 6) == "reload" && payload == "*") {
             WebDashCore::Get().Log(WebDashType::LogType::INFO, "`reload *` request received.");
             suite.ReloadAll();
+
+            // If there's a callback ID, respond with list of reloaded configs
+            if (cmd.length() > 7 && cmd[6] == ':') {
+                json arr = suite.GetRegisteredConfigPaths();
+                callback(cmd + " " + arr.dump());
+            }
         }
 
         //
@@ -241,10 +247,10 @@ int execute_main()
         // following an extra space
         //
 
-        if (cmd.substr(0, 11) == "list-config") {
-            WebDashCore::Get().Log(WebDashType::LogType::INFO, "`list-config` request received.");
+        if (cmd.substr(0, 23) == "list-registered-configs") {
+            WebDashCore::Get().Log(WebDashType::LogType::INFO, "`list-registered-configs` request received.");
 
-            string cbid = cmd.substr(12);
+            string cbid = cmd.substr(24);
             callback(cmd + " " + suite.GetRegisteredConfigsJsonDump());
         }
 

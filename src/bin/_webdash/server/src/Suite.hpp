@@ -33,6 +33,8 @@ public:
 
     string GetRegisteredConfigsJsonDump();
 
+    vector<string> GetRegisteredConfigPaths();
+
 private:
     // Serializes configuration into a json string. Has to be understood by ::LoadSaved.
     void SerializeAndSave();

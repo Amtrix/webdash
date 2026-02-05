@@ -81,7 +81,7 @@ namespace websocket {
     }
 
     inline void Listen(function<void(string, string, std::function<void(string)>)> callback) {
-        WebDashCore::Get().Log(WebDashType::LogType::INFO, "Attempting to listen to: '9154'");
+        WebDashCore::Get().Log(WebDashType::LogType::INFO, "Attempting to listen to: '9002'");
 
         websocket::callback = callback;
 
@@ -98,8 +98,8 @@ namespace websocket {
             echo_server.set_message_handler(bind(&on_message,&echo_server,::_1,::_2));
             echo_server.set_open_handler(bind(&on_open,&echo_server,::_1));
 
-            // Listen on port 9154
-            echo_server.listen(9154);
+            // Listen on port 9002
+            echo_server.listen(9002);
             cout << "S1" << endl;
 
             // Start the server accept loop

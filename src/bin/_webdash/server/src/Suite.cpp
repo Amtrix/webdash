@@ -81,6 +81,13 @@ void Suite::ReloadAll() {
     }
 }
 
+vector<string> Suite::GetRegisteredConfigPaths() {
+    vector<string> paths;
+    for (const auto& entry : _scripts)
+        paths.push_back(entry.GetPath());
+    return paths;
+}
+
 void Suite::Run() {
     _periodic_parse = std::thread([&]{
         // Time when periodic running started.

@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <optional>
 #include <algorithm>
+#include <unistd.h>
 
 // External
 #include <nlohmann/json.hpp>
@@ -61,12 +62,13 @@ namespace NATIVE_COMMANDS
     string UNREGISTER = "--unregister";
     string RELOADALL = "--reload-all";
     string HELP = "--help";
-    string LIST_CONFIG = "--list-config";
+    string LIST_CONFIG = "--list-registered-configs";
     string LIST_DEFINITIONS = "--list-definitions";
     string _INT_CREATE_BUILD_INIT = _WEBDASH_INTERNAL_CMD_PREFIX + "create-build-init";
     string _INT_CREATE_PROJECT_CLONER = _WEBDASH_INTERNAL_CMD_PREFIX + "create-project-cloner";
     string PING_SERVER = "--ping-server";
     string INSTALL_MODULE = "--install-module";
+    string PORT_STATUS = "--port-status";
 };
 
 
@@ -84,7 +86,8 @@ vector<string> WebDashNativeCommands()
              NATIVE_COMMANDS::_INT_CREATE_BUILD_INIT,
              NATIVE_COMMANDS::_INT_CREATE_PROJECT_CLONER,
              NATIVE_COMMANDS::PING_SERVER,
-             NATIVE_COMMANDS::INSTALL_MODULE };
+             NATIVE_COMMANDS::INSTALL_MODULE,
+             NATIVE_COMMANDS::PORT_STATUS };
 }
 
 
@@ -105,7 +108,7 @@ bool IsInternalCommand(const string command) {
 
 
 /**
- * @brief Command: `webdash list-config`.
+ * @brief Command: `webdash list-registered-configs`.
  * @param arguments The (command line) arguments.
  * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
  */
@@ -380,6 +383,104 @@ bool PingServer_Command(const vector<string>& arguments) {
 
 
 /**
+ * @brief Command: `webdash --port-status <port>`.
+ * Checks if a port is in use and shows which process is using it.
+ * @param arguments The (command line) arguments.
+ * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
+ */
+bool PortStatus_Command(const vector<string>& arguments) {
+    if (arguments.size() != 2)
+        return false;
+
+    if (arguments[0] != NATIVE_COMMANDS::PORT_STATUS)
+        return false;
+
+    int port = 0;
+    try {
+        port = std::stoi(arguments[1]);
+    } catch (...) {
+        cerr << "Error: Invalid port number: " << arguments[1] << endl;
+        return true;
+    }
+
+    if (port < 1 || port > 65535) {
+        cerr << "Error: Port must be between 1 and 65535" << endl;
+        return true;
+    }
+
+    // Use ss command to check port status
+    string cmd = "ss -tlnp 'sport = :" + to_string(port) + "' 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        cerr << "Error: Failed to run ss command" << endl;
+        return true;
+    }
+
+    string output;
+    char buffer[256];
+    while (fgets(buffer, sizeof(buffer), pipe)) {
+        output += buffer;
+    }
+    int status = pclose(pipe);
+
+    if (output.find("LISTEN") == string::npos) {
+        cout << "Port " << port << ": " << "\033[32mUNUSED\033[0m" << endl;
+    } else {
+        cout << "Port " << port << ": " << "\033[31mIN USE\033[0m" << endl;
+
+        // Extract process info from ss output
+        // Format: LISTEN  0  5  0.0.0.0:8089  0.0.0.0:*  users:(("python3",pid=12345,fd=3))
+        size_t users_pos = output.find("users:((");
+        if (users_pos != string::npos) {
+            size_t start = users_pos + 8;  // Skip 'users:(("'
+            size_t end = output.find("\"", start);
+            if (end != string::npos) {
+                string process_name = output.substr(start, end - start);
+                cout << "  Process: " << process_name << endl;
+            }
+
+            // Extract PID
+            size_t pid_pos = output.find("pid=", users_pos);
+            if (pid_pos != string::npos) {
+                size_t pid_start = pid_pos + 4;
+                size_t pid_end = output.find_first_of(",)", pid_start);
+                if (pid_end != string::npos) {
+                    string pid = output.substr(pid_start, pid_end - pid_start);
+                    cout << "  PID: " << pid << endl;
+
+                    // Get the command line of the process
+                    string cmdline_path = "/proc/" + pid + "/cmdline";
+                    ifstream cmdline_file(cmdline_path);
+                    if (cmdline_file.is_open()) {
+                        string cmdline;
+                        getline(cmdline_file, cmdline);
+                        // Replace null bytes with spaces
+                        for (char& c : cmdline) {
+                            if (c == '\0') c = ' ';
+                        }
+                        if (!cmdline.empty()) {
+                            cout << "  Command: " << cmdline << endl;
+                        }
+                    }
+
+                    // Get the working directory
+                    string cwd_path = "/proc/" + pid + "/cwd";
+                    char cwd_buf[4096];
+                    ssize_t len = readlink(cwd_path.c_str(), cwd_buf, sizeof(cwd_buf) - 1);
+                    if (len != -1) {
+                        cwd_buf[len] = '\0';
+                        cout << "  Working Dir: " << cwd_buf << endl;
+                    }
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+
+/**
  * @brief Helper function to read project-location from a cloned repo's webdash.config.json.
  * @param repo_path Path to the cloned repository.
  * @returns The project-location value if found, empty string otherwise.
@@ -572,7 +673,7 @@ bool Help_Command(const vector<string>& arguments) {
     cout << "    webdash --install-module git@github.com:user/repo.git" << endl;
     cout << "        Install a module by reading its project-location from webdash.config.json" << endl;
     cout << endl;
-    cout << "Run 'webdash --list-config' to see all registered project configs." << endl;
+    cout << "Run 'webdash --list-registered-configs' to see all registered project configs." << endl;
 
     return true;
 }
@@ -733,6 +834,7 @@ int ExecuteUserInput(int argc, char **argv) {
     if (Unregister_Command(arguments)) return 0;
     if (ReloadAll_Command(arguments)) return 0;
     if (PingServer_Command(arguments)) return 0;
+    if (PortStatus_Command(arguments)) return 0;
     if (InstallModule_Command(arguments)) return 0;
     if (Help_Command(arguments)) return 0;
 
@@ -769,7 +871,7 @@ int ExecuteUserInput(int argc, char **argv) {
             cerr << endl << string(kSpaceOutGroup, ' ') << "Fix the JSON syntax error in '" << WebDashCore::GetProjectConfigFilename() << "' and try again." << endl;
         } else {
             cerr << endl << string(kSpaceOutGroup, ' ') << "No '" << WebDashCore::GetProjectConfigFilename() << "' found in current directory." << endl;
-            cerr << string(kSpaceOutGroup, ' ') << "Run 'webdash --list-config' to see registered projects." << endl;
+            cerr << string(kSpaceOutGroup, ' ') << "Run 'webdash --list-registered-configs' to see registered projects." << endl;
         }
     }
 
@@ -822,7 +924,7 @@ int main(int argc, char **argv) {
         cerr << "HINTS:" << endl;
         cerr << "  1. Create a '" << WebDashCore::GetProjectConfigFilename() << "' in the current directory" << endl;
         cerr << "  2. Or specify the full path: webdash /path/to/project:" << endl;
-        cerr << "  3. Run 'webdash -list-config' to see all registered configs" << endl;
+        cerr << "  3. Run 'webdash --list-registered-configs' to see all registered configs" << endl;
         cerr << "\n";
         return 1;
     } catch (WebDashException::General& e) {

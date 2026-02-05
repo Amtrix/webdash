@@ -34,7 +34,7 @@
         },
         {
             "name": "start",
-            "action": "$.rootDir()/app-persistent/bin/_webdash/webdash-server"
+            "action": "exec $.rootDir()/app-persistent/bin/_webdash/webdash-server"
         },
         {
             "name": "stop",
