@@ -14,6 +14,46 @@
             "wdir": "$.thisDir()"
         },
         {
+            "name": "all",
+            "silent": true,
+            "actions": [
+                ":prerequisites",
+                ":all-fast"
+            ],
+            "exit-actions": [
+                {
+                    "0": [
+                        "echo 'All tests completed successfully. Performing cleanup:'",
+                        ":cleanup"
+                    ]
+                },
+                {
+                    "*": [
+                        "echo 'Some test(s) failed. Performing cleanup:'",
+                        ":cleanup"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "all-fast",
+            "silent": true,
+            "test-case": "All tests run.",
+            "actions": [
+                ":test-success-dependency",
+                ":test-rootdir-value",
+                ":test-action-dependency",
+                ":test-heartbeat-log",
+                "webdash :condition-port-pass",
+                "webdash condition-port-used",
+                "webdash condition-port-used-fail",
+                ":failed-command",
+                "./clonedby-profile-dep:all",
+                ":test-logging-all",
+                ":test-invalid-user-via-server"
+            ]
+        },
+        {
             "name": "test-success-dependency",
             "silent": true,
             "test-case": "Dependencies exist/created.",
@@ -141,46 +181,6 @@
                         "echo 'Test [passed]: failed-command exited with non-zero as expected.'"
                     ],
                     "return": 0
-                }
-            ]
-        },
-        {
-            "name": "all-fast",
-            "silent": true,
-            "test-case": "All tests run (without prerequisites).",
-            "actions": [
-                ":test-success-dependency",
-                ":test-rootdir-value",
-                ":test-action-dependency",
-                ":test-heartbeat-log",
-                "webdash :condition-port-pass",
-                "webdash condition-port-used",
-                "webdash condition-port-used-fail",
-                ":failed-command",
-                "./clonedby-profile-dep:all",
-                ":test-logging-all",
-                ":test-invalid-user-via-server"
-            ]
-        },
-        {
-            "name": "all",
-            "silent": true,
-            "actions": [
-                ":prerequisites",
-                ":all-fast"
-            ],
-            "exit-actions": [
-                {
-                    "0": [
-                        "echo 'All tests completed successfully. Performing cleanup:'",
-                        ":cleanup"
-                    ]
-                },
-                {
-                    "*": [
-                        "echo 'Some test(s) failed. Performing cleanup:'",
-                        ":cleanup"
-                    ]
                 }
             ]
         },
