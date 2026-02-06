@@ -4,6 +4,8 @@
 #include <vector>
 #include <map>
 #include <functional>
+#include <optional>
+#include <sys/types.h>  // For uid_t, gid_t
 using namespace std;
 
 class WebDashConfigTask;
@@ -101,7 +103,7 @@ namespace WebDashType {
     };
 
     /**
-     * @struct @todo
+     * @struct RunConfig - Configuration for how a task should be executed.
      */
     struct RunConfig {
         bool run_only_with_frequency = false;
@@ -109,6 +111,12 @@ namespace WebDashType {
         bool verbose = false;  // Show detailed execution info (Forking, TASKID, etc.)
         std::function<std::optional<WebDashConfigTask>(string)> TaskRetriever;
         std::vector<std::string> extra_args;  // Command-line arguments for $.args() substitution
+
+        // Optional: run as a specific user (uid/gid). If set, the forked process will
+        // switch to this user before executing. Requires root privileges.
+        std::optional<uid_t> run_as_uid;
+        std::optional<gid_t> run_as_gid;
+        std::optional<std::string> run_as_home;  // HOME directory for the user
     };
 
     using StoreWriteChannel = std::function<void(WebDashType::StorageWriteType, string)>;

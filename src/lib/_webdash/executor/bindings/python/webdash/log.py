@@ -147,3 +147,80 @@ class Log:
 
 # Singleton instance
 log = Log()
+
+
+class WebDashProject:
+    """
+    Efficient project-scoped logging with persistent file handles.
+    
+    Opens log files once and keeps them open for the lifetime of the project,
+    avoiding the overhead of repeated open/close operations.
+    """
+    
+    def __init__(self, project_name: str):
+        """Initialize the project with persistent log file handles."""
+        self.project_name = project_name
+        self._files = {}
+        self._closed = False
+        
+        root = get_root_directory()
+        self._log_dir = root / TEMPORARY_STORAGE_DIR / LOGGING_SUBDIR / project_name
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+        
+        for level in LogLevel:
+            path = self._log_dir / f"{LOG_FILENAME_PREFIX}{level.value}.txt"
+            self._rotate_if_needed(path)
+            self._files[level] = open(path, 'a')
+    
+    def _rotate_if_needed(self, log_file: Path) -> None:
+        if not log_file.exists():
+            return
+        try:
+            if log_file.stat().st_size > MAX_LOG_FILE_SIZE_BYTES:
+                previous = log_file.parent / f"{LOG_ROTATION_PREFIX}{log_file.name}"
+                if previous.exists():
+                    previous.unlink()
+                log_file.rename(previous)
+        except (IOError, OSError):
+            pass
+    
+    def _log(self, level: LogLevel, message: str) -> None:
+        if self._closed:
+            return
+        try:
+            f = self._files.get(level)
+            if f:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"{timestamp}: {message}\n")
+        except Exception:
+            pass
+    
+    def debug(self, message: str) -> None:
+        self._log(LogLevel.DEBUG, message)
+    
+    def info(self, message: str) -> None:
+        self._log(LogLevel.INFO, message)
+    
+    def warn(self, message: str) -> None:
+        self._log(LogLevel.WARN, message)
+    
+    def error(self, message: str) -> None:
+        self._log(LogLevel.ERROR, message)
+    
+    def notify(self, message: str) -> None:
+        self._log(LogLevel.NOTIFY, message)
+    
+    def end(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for f in self._files.values():
+            try:
+                f.flush()
+                f.close()
+            except Exception:
+                pass
+        self._files.clear()
+    
+    def __del__(self):
+        self.end()

@@ -4,6 +4,22 @@
 
 #include <mutex>
 #include <thread>
+#include <optional>
+#include <sys/types.h>
+
+/**
+ * Registration info for a config - includes the config and optional user context.
+ */
+struct RegisteredConfig {
+    WebDashConfig config;
+    std::optional<uid_t> run_as_uid;
+    std::optional<gid_t> run_as_gid;
+    std::optional<std::string> run_as_home;
+
+    RegisteredConfig(const WebDashConfig& c) : config(c) {}
+    RegisteredConfig(const WebDashConfig& c, uid_t uid, gid_t gid, const std::string& home)
+        : config(c), run_as_uid(uid), run_as_gid(gid), run_as_home(home) {}
+};
 
 /**
  * Represents a set of multiple config files. Manages storage of its configuration. Periodically executes
@@ -19,8 +35,11 @@ public:
     // Loads the previously serialized and saved state.
     void LoadSaved();
 
-    // Adds a new configuration file to the suite.
+    // Adds a new configuration file to the suite (runs as root).
     void RegisterConfig(const WebDashConfig& config);
+
+    // Adds a new configuration file to the suite with user context.
+    void RegisterConfig(const WebDashConfig& config, uid_t uid, gid_t gid, const std::string& home);
 
     // Remvoes a configuration file from the suite, if it exists.
     void UnRegisterConfig(const string& path);
@@ -35,6 +54,9 @@ public:
 
     vector<string> GetRegisteredConfigPaths();
 
+    // Get user context for a registered config path
+    std::optional<RegisteredConfig> GetRegisteredConfig(const string& path);
+
 private:
     // Serializes configuration into a json string. Has to be understood by ::LoadSaved.
     void SerializeAndSave();
@@ -45,8 +67,8 @@ private:
     // JSON that was loaded from previous serializations (by SerializeAndSave).
     json _json_source_data;
 
-    // Holds the object representatives of all script files we own in this suite.
-    vector<WebDashConfig> _scripts;
+    // Holds registered configs with their user context.
+    vector<RegisteredConfig> _scripts;
 
     // Protects areas with parallel access.
     std::mutex _suite_mutex;

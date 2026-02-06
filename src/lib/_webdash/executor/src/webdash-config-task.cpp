@@ -11,9 +11,13 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <iomanip>
 #include <sstream>
 #include <ctime>
 #include <iostream>
+#include <pwd.h>
+#include <unordered_map>
+#include <tuple>
 using namespace std;
 
 
@@ -201,6 +205,29 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
     }
 
     try {
+        const string user = task_config["user"].get<std::string>();
+        this->_user = user;
+    }
+    catch (...) {
+        // No user specified - run as current user
+    }
+
+    try {
+        this->_silent = task_config["silent"].get<bool>();
+    }
+    catch (...) {
+        // No silent specified - default to verbose output
+    }
+
+    try {
+        const string test_case = task_config["test-case"].get<std::string>();
+        this->_test_case = test_case;
+    }
+    catch (...) {
+        // No test-case specified
+    }
+
+    try {
         const string style = task_config["executionStyle"].get<std::string>();
         if (style == "stopOnFirstSuccess") {
             this->_execution_style = ExecutionStyle::StopOnFirstSuccess;
@@ -297,6 +324,12 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
             action = WebDashUtils::ApplySubstitutions(action, defs);
             action = WebDashUtils::ResolvePortReferences(action, profile_entries);
         }
+    }
+
+    // Apply substitutions to test-case
+    if (_test_case.has_value()) {
+        _test_case = WebDashUtils::ApplySubstitutions(_test_case.value(), defs);
+        _test_case = WebDashUtils::ResolvePortReferences(_test_case.value(), profile_entries);
     }
 
     // Note: _condition is evaluated at runtime, not substituted here
@@ -442,6 +475,35 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
         }
 
         /**
+         * Switch to a different user if specified in the run config.
+         * This must be done before chdir to ensure proper permissions.
+         */
+        if (config.run_as_uid.has_value()) {
+            // Set HOME environment variable if provided
+            if (config.run_as_home.has_value()) {
+                setenv("HOME", config.run_as_home.value().c_str(), 1);
+            }
+
+            // Set group ID first (must be done before setuid)
+            if (config.run_as_gid.has_value()) {
+                if (setgid(config.run_as_gid.value()) != 0) {
+                    perror("WebDashConfigTask::Run!setgid");
+                    WebDash().Log(WebDashType::LogType::ERR, "Failed to setgid to: " + to_string(config.run_as_gid.value()));
+                    exit(1);
+                }
+            }
+
+            // Set user ID
+            if (setuid(config.run_as_uid.value()) != 0) {
+                perror("WebDashConfigTask::Run!setuid");
+                WebDash().Log(WebDashType::LogType::ERR, "Failed to setuid to: " + to_string(config.run_as_uid.value()));
+                exit(1);
+            }
+
+            WebDash().Log(WebDashType::LogType::DEBUG, "Switched to uid=" + to_string(config.run_as_uid.value()));
+        }
+
+        /**
          * Change the CWD if required by the task.
          */
 
@@ -470,16 +532,18 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
 
         paramList[execParts.size()] = NULL;
 
-        // Always show task info (TASKID, CWD, CALL)
-        cout << "\033[1;33m-----------------" << endl;
-        cout << "  TASKID: " << _taskid << endl;
-        cout << "  CWD:    " << std::filesystem::current_path() << endl;
-        cout << "  CALL:   `" << paramList[0];
-        for (unsigned int i = 1; i < execParts.size(); ++i) {
-            cout << " " << execParts[i];
+        // Show task info (TASKID, CWD, CALL) unless silent mode
+        if (!_silent) {
+            cout << "\033[1;33m-----------------" << endl;
+            cout << "  TASKID: " << _taskid << endl;
+            cout << "  CWD:    " << std::filesystem::current_path() << endl;
+            cout << "  CALL:   `" << paramList[0];
+            for (unsigned int i = 1; i < execParts.size(); ++i) {
+                cout << " " << execParts[i];
+            }
+            cout << "`" << endl;
+            cout << "-----------------\033[0m" << endl;
         }
-        cout << "`" << endl;
-        cout << "-----------------\033[0m" << endl;
 
         {
             // If we are to redirect output to a string, create a copy of filedes[1] to STDOUT_FILENO (standard output).
@@ -572,16 +636,54 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
 
     WebDashType::RunReturn ret;
 
+    // Check timing FIRST before any expensive operations like user lookups
     if (!ShouldExecuteTimewise(config)) {
         if (_print_skip_has_happened == false)
         {
             WebDash().Log(WebDashType::LogType::DEBUG, "Skipping: " + this->_taskid);
-            WebDash().Log(WebDashType::LogType::DEBUG, "Was executed XYZ milliseconds ago.");
-            WebDash().Log(WebDashType::LogType::DEBUG, "....ommitting further similar reports until next execution passed.");
+            // Only show elapsed time and omit message if task has a frequency (i.e., is a scheduled task)
+            if (_frequency.has_value()) {
+                const auto diff = std::chrono::high_resolution_clock::now() - _last_exec_time;
+                const auto diff_ms = duration_cast<milliseconds>(diff).count();
+                const double diff_sec = diff_ms / 1000.0;
+                std::ostringstream oss;
+                oss << std::fixed << std::setprecision(1) << diff_sec;
+                WebDash().Log(WebDashType::LogType::DEBUG, "Was executed " + oss.str() + " seconds ago.");
+                WebDash().Log(WebDashType::LogType::DEBUG, "....omitting further similar reports until next execution passed.");
+            }
             _print_skip_has_happened = true;
         }
 
         return ret;
+    }
+
+    // If a user is specified in the task config, look up uid/gid/home and apply to run config
+    // Task-level user takes precedence over registration-level user
+    // Use static cache to avoid repeated NSS lookups for the same username
+    if (_user.has_value()) {
+        static std::unordered_map<std::string, std::tuple<uid_t, gid_t, std::string>> user_cache;
+
+        auto it = user_cache.find(_user.value());
+        if (it != user_cache.end()) {
+            config.run_as_uid = std::get<0>(it->second);
+            config.run_as_gid = std::get<1>(it->second);
+            config.run_as_home = std::get<2>(it->second);
+            WebDash().Log(WebDashType::LogType::DEBUG, "Task will run as user: " + _user.value() + " (uid=" + to_string(config.run_as_uid.value()) + ", cached)");
+        } else {
+            struct passwd* pwd = getpwnam(_user.value().c_str());
+            if (pwd != nullptr) {
+                config.run_as_uid = pwd->pw_uid;
+                config.run_as_gid = pwd->pw_gid;
+                config.run_as_home = pwd->pw_dir;
+                user_cache[_user.value()] = {pwd->pw_uid, pwd->pw_gid, pwd->pw_dir};
+                WebDash().Log(WebDashType::LogType::DEBUG, "Task will run as user: " + _user.value() + " (uid=" + to_string(pwd->pw_uid) + ")");
+            } else {
+                WebDash().Log(WebDashType::LogType::ERR, "User not found: " + _user.value());
+                ret.return_code = 1;
+                ReportTestCaseResult(ret);
+                return ret;
+            }
+        }
     }
 
     // Check condition before executing
@@ -595,10 +697,12 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
     if (!EvaluateCondition()) {
         // Condition is false - run actions-else if defined
         if (!_actions_else.empty()) {
-            cout << "\033[1;33m-----------------" << endl;
-            cout << "  TASKID: " << _taskid << endl;
-            cout << "  CONDITION FALSE: " << _condition.value_or("(none)") << " - running actions-else" << endl;
-            cout << "-----------------\033[0m" << endl;
+            if (!_silent) {
+                cout << "\033[1;33m-----------------" << endl;
+                cout << "  TASKID: " << _taskid << endl;
+                cout << "  CONDITION FALSE: " << _condition.value_or("(none)") << " - running actions-else" << endl;
+                cout << "-----------------\033[0m" << endl;
+            }
 
             // Run actions-else (without exit-actions processing)
             for (const string& action : _actions_else) {
@@ -614,10 +718,12 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
         }
 
         // No actions-else defined, just skip
-        cout << "\033[1;33m-----------------" << endl;
-        cout << "  TASKID: " << _taskid << endl;
-        cout << "  SKIPPED: Condition not satisfied: " << _condition.value_or("(none)") << endl;
-        cout << "-----------------\033[0m" << endl;
+        if (!_silent) {
+            cout << "\033[1;33m-----------------" << endl;
+            cout << "  TASKID: " << _taskid << endl;
+            cout << "  SKIPPED: Condition not satisfied: " << _condition.value_or("(none)") << endl;
+            cout << "-----------------\033[0m" << endl;
+        }
         return ret;
     }
 
@@ -684,7 +790,10 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
                             if (result.Failed()) {
                                 std::cerr << "ERROR: Action failed: " << action << std::endl;
                                 ret.return_code = 1;
-                                if (!_continue_on_error) return ret;
+                                if (!_continue_on_error) {
+                                    ReportTestCaseResult(ret);
+                                    return ret;
+                                }
                             }
                         }
                         resolved = true;
@@ -706,7 +815,10 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
                                 std::cerr << "  Output: " << result.output << std::endl;
                             }
                             ret.return_code = 1;
-                            if (!_continue_on_error) return ret;
+                            if (!_continue_on_error) {
+                                ReportTestCaseResult(ret);
+                                return ret;
+                            }
                         } else if (!profile_dep.actions.empty()) {
                             // Run post-clone actions if any
                             string working_dir = profile_dep.wdir.empty() ? profile_dep.destination : profile_dep.wdir;
@@ -722,7 +834,10 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
                                 if (action_result.Failed()) {
                                     std::cerr << "ERROR: Post-clone action failed: " << action << std::endl;
                                     ret.return_code = 1;
-                                    if (!_continue_on_error) return ret;
+                                    if (!_continue_on_error) {
+                                        ReportTestCaseResult(ret);
+                                        return ret;
+                                    }
                                 }
                             }
                         }
@@ -741,7 +856,10 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
                     "Required path does not exist: " + check_path + " (required by " + _taskid + ")");
                 std::cerr << "ERROR: Required path does not exist: " << check_path << std::endl;
                 ret.return_code = 1;
-                if (!_continue_on_error) return ret;
+                if (!_continue_on_error) {
+                    ReportTestCaseResult(ret);
+                    return ret;
+                }
             }
             continue;  // Path-only dependency done, move to next
         }
@@ -773,7 +891,10 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
                         WebDash().Log(WebDashType::LogType::ERR, "Clone output: " + result.output);
                     }
                     ret.return_code = 1;
-                    if (!_continue_on_error) return ret;
+                    if (!_continue_on_error) {
+                        ReportTestCaseResult(ret);
+                        return ret;
+                    }
                     continue;
                 }
             }
@@ -813,7 +934,10 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
                 WebDash().Log(WebDashType::LogType::ERR,
                     "Dependency not found: " + dep.path + " (required by " + _taskid + ")");
                 ret.return_code = 1;
-                if (!_continue_on_error) return ret;
+                if (!_continue_on_error) {
+                    ReportTestCaseResult(ret);
+                    return ret;
+                }
             }
         }
     }
@@ -866,7 +990,9 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
                 ret.return_code |= action_return_code;
                 if (action_return_code && !_continue_on_error) {
                     std::cerr << "ERROR: Action failed with exit code " << action_return_code << ": " << action << std::endl;
-                    return RunExitActions(ret.return_code, effective_config);
+                    auto final_ret = RunExitActions(ret.return_code, effective_config);
+                    ReportTestCaseResult(final_ret);
+                    return final_ret;
                 }
                 break;
 
@@ -874,7 +1000,9 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
                 if (action_return_code == 0) {
                     // Success! We're done.
                     ret.return_code = 0;
-                    return RunExitActions(ret.return_code, effective_config);
+                    auto final_ret = RunExitActions(ret.return_code, effective_config);
+                    ReportTestCaseResult(final_ret);
+                    return final_ret;
                 }
                 // Keep track of the last failure code
                 ret.return_code = action_return_code;
@@ -893,7 +1021,12 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
     }
 
     // Run exit-actions based on final return code
-    return RunExitActions(ret.return_code, effective_config);
+    auto final_ret = RunExitActions(ret.return_code, effective_config);
+
+    // Report test-case result if specified
+    ReportTestCaseResult(final_ret);
+
+    return final_ret;
 }
 
 
@@ -969,6 +1102,17 @@ WebDashType::RunReturn WebDashConfigTask::RunExitActions(int exit_code, WebDashT
     }
 
     return ret;
+}
+
+
+void WebDashConfigTask::ReportTestCaseResult(const WebDashType::RunReturn& ret) {
+    if (_test_case.has_value()) {
+        if (ret.return_code == 0) {
+            cout << "\033[1;32m[PASS]\033[0m " << _test_case.value() << endl;
+        } else {
+            cout << "\033[1;31m[FAIL]\033[0m " << _test_case.value() << endl;
+        }
+    }
 }
 
 

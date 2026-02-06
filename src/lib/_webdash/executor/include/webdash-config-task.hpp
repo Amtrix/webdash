@@ -67,8 +67,9 @@ class WebDashConfigTask {
         string _name;
         std::optional<string> _wdir;
 
-        // Per default, ::time_point is initialized to epoch.
-        std::chrono::high_resolution_clock::time_point _last_exec_time;
+        // Initialize to current time so first execution happens immediately.
+        std::chrono::high_resolution_clock::time_point _last_exec_time =
+            std::chrono::high_resolution_clock::now() - std::chrono::hours(24 * 365);
 
         // Exactly that. Counts the number of times ::Run() was called.
         int _times_called = 0;
@@ -95,6 +96,12 @@ class WebDashConfigTask {
 
         std::optional<string> _condition;  // Condition that must be true to run command
 
+        std::optional<string> _user;  // User to run command as (username)
+
+        bool _silent = false;  // If true, suppress verbose task output (TASKID, CWD, CALL)
+
+        std::optional<string> _test_case;  // If set, report pass/fail with this test case name
+
         ExecutionStyle _execution_style = ExecutionStyle::StopOnFirstFailure;
 
         // Exit actions: map exit codes (or "*" for any non-zero) to actions and optional return override
@@ -118,4 +125,10 @@ class WebDashConfigTask {
          * @returns Updated RunReturn with exit-action results.
          */
         WebDashType::RunReturn RunExitActions(int exit_code, WebDashType::RunConfig config);
+
+        /**
+         * @brief Reports the test-case result if a test-case is specified.
+         * @param ret The return value to report and pass through.
+         */
+        void ReportTestCaseResult(const WebDashType::RunReturn& ret);
 };

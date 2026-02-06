@@ -257,7 +257,7 @@ public:
      * Returns:
      *     bool - TRUE on SUCCESS.
      */
-    void sendAndWaitForResponse(int id, std::string cmd, std::string msg, std::function<void(string)> cb)
+    void sendAndWaitForResponse(int id, std::string cmd, std::string msg, std::function<void(string)> cb, int timeout_seconds = 5)
     {
         con_list::iterator metadata_it = m_connection_list.find(id);
 
@@ -276,10 +276,10 @@ public:
         send(id, prefix + " " + msg);
 
         //
-        // Look for response next 1 second.
+        // Look for response for the specified timeout.
         //
 
-        for (size_t i = 0; i < 5; ++i)
+        for (int i = 0; i < timeout_seconds; ++i)
         {
             auto ret = metadata_it->second->get_response(prefix);
 
@@ -289,7 +289,7 @@ public:
                 return;
             }
 
-            usleep(1000 * 1000); // 1 milliseconds * 100
+            usleep(1000 * 1000); // 1 second
         }
 
         throw std::runtime_error("Websocket timeout.");
@@ -338,12 +338,21 @@ int ConnectEndpoint(websocket_endpoint *endpoint)
 }
 
 
-void WebDashRegister(string configPath)
+void WebDashRegister(string configPath, const string& runAsUser = "")
 {
     websocket_endpoint endpoint;
 
     int id = ConnectEndpoint(&endpoint);
-    endpoint.send(id, "register " + configPath);
+
+    if (runAsUser.empty()) {
+        endpoint.send(id, "register " + configPath);
+    } else {
+        // Send as JSON with user info
+        nlohmann::json payload;
+        payload["path"] = configPath;
+        payload["user"] = runAsUser;
+        endpoint.send(id, "register " + payload.dump());
+    }
 }
 
 
@@ -422,7 +431,46 @@ void WebDashConfigList()
     {
         auto parsed_resp = json::parse(resp);
 
-        for (string elem : parsed_resp)
-            cout << "   " << elem << endl;
+        for (auto& elem : parsed_resp) {
+            if (elem.is_string()) {
+                // Old format: plain path string
+                cout << "   " << elem.get<string>() << endl;
+            } else if (elem.is_object()) {
+                // New format: object with path and optional user info
+                string path = elem["path"].get<string>();
+                if (elem.contains("uid")) {
+                    cout << "   " << path << " (user: uid=" << elem["uid"] << ")" << endl;
+                } else {
+                    cout << "   " << path << endl;
+                }
+            }
+        }
     });
+}
+
+
+/**
+ * Tell the webdash-server to immediately process a config file.
+ * This runs all tasks with a frequency set, simulating scheduled execution.
+ */
+void WebDashServerProcessOnce(string configPath)
+{
+    websocket_endpoint endpoint;
+
+    int id = ConnectEndpoint(&endpoint);
+
+    endpoint.sendAndWaitForResponse(id, "process-once", configPath, [&](string resp)
+    {
+        try {
+            auto parsed_resp = json::parse(resp);
+            if (parsed_resp.contains("status") && parsed_resp["status"] == "success") {
+                int tasks = parsed_resp.value("tasks_executed", 0);
+                cout << "Success: Server processed config (" << tasks << " task(s) executed)." << endl;
+            } else {
+                cout << "Response: " << resp << endl;
+            }
+        } catch (...) {
+            cout << "Response: " << resp << endl;
+        }
+    }, 10);
 }

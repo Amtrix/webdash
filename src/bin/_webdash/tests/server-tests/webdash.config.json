@@ -1,0 +1,21 @@
+{
+    "commands": [
+        {
+            "name": "test-invalid-user-scheduled",
+            "action": "echo 'This should not run'",
+            "silent": true,
+            "user": "nonexistent_test_user_xyz",
+            "frequency": "60000"
+        },
+        {
+            "name": "test-invalid-user-via-server",
+            "silent": true,
+            "test-case": "Server logs 'User not found' for invalid user in scheduled task.",
+            "actions": [
+                "webdash --server-process-once $.thisDir()/webdash.config.json",
+                "grep 'User not found: nonexistent_test_user_xyz' $.rootDir()/app-temporary/logging/webdash-server/logging.error.txt | tail -1"
+            ],
+            "wdir": "$.thisDir()"
+        }
+    ]
+}

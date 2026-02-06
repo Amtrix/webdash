@@ -10,6 +10,8 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <mutex>
+#include <map>
 
 using namespace std;
 using json = nlohmann::json;
@@ -303,81 +305,134 @@ void WebDashCore::LoadFromAppStorage(const string& filename,
 }
 
 
-void WebDashCore::Log(const WebDashType::LogType type,
-                      const std::string msg) {
-    // Maximum log file size before rotation (10 MB)
-    constexpr std::uintmax_t kMaxLogFileSize = 10 * 1024 * 1024;
+// Static storage for persistent log file handles
+namespace {
+    std::map<WebDashType::LogType, std::ofstream> g_log_files;
+    std::map<WebDashType::LogType, filesystem::path> g_log_paths;
+    filesystem::path g_log_directory;
+    bool g_log_files_initialized = false;
+    std::mutex g_log_mutex;
+    constexpr std::uintmax_t kMaxLogFileSize = 10 * 1024 * 1024;  // 10 MB
 
-    // Stores the current time for timestamping the log entries.
-    std::string curr_time = "";
-
-    // Computes the current time.
-    {
+    std::string GetLogTimestamp() {
         auto now_c = std::chrono::system_clock::now();
         std::time_t now_t = std::chrono::system_clock::to_time_t(now_c);
-
         std::stringstream ss;
         ss << std::put_time(std::localtime(&now_t), "%F %T");
-        curr_time = ss.str();
+        return ss.str();
     }
 
-    filesystem::path full_log_file_path;
-    filesystem::path log_directory;
-
-    /*
-     * If webdash.config.json hasn't been determined yet, default to
-     * app-temporary/webdash.LOG/DEBUG/INFO.txt
-    */
-
-    if (_singleton_instance) {
-        log_directory = _GetAndCreateLogDirectory();
-
-        full_log_file_path = log_directory / (string(WebDashConst::Public::kLogFilenamePrefix)
-                              + WebDashType::kLogTypeToString.at(type)
-                              + ".txt");
-    } else {
-        // Singleton not yet initialized - try to use env var for logging path.
-        // If env var not set, skip logging entirely (we can't log before root is found).
-        const char* env_root = getenv(WebDashConst::Public::kEnvVarName);
-        if (env_root == nullptr) {
-            // Can't log anywhere - silently skip
+    void CheckAndRotateLog(WebDashType::LogType type) {
+        auto it = g_log_paths.find(type);
+        if (it == g_log_paths.end() || !filesystem::exists(it->second)) {
             return;
         }
 
-        log_directory = filesystem::path(env_root) / WebDashConst::Public::kTemporaryStorageDir;
-        full_log_file_path = log_directory / (string(WebDashConst::Public::kLogFilenamePrefix)
-                              + WebDashType::kLogTypeToString.at(type)
-                              + ".txt");
-    }
-
-    // Check if file exists and needs rotation
-    if (std::filesystem::exists(full_log_file_path)) {
         std::error_code ec;
-        auto file_size = std::filesystem::file_size(full_log_file_path, ec);
+        auto file_size = filesystem::file_size(it->second, ec);
+        if (ec || file_size < kMaxLogFileSize) {
+            return;
+        }
 
-        if (!ec && file_size >= kMaxLogFileSize) {
-            // Rotate: rename current file to previous.<filename>
-            filesystem::path previous_log_path = full_log_file_path.parent_path() /
-                (WebDashConst::Public::kLogRotationPrefix + full_log_file_path.filename().string());
+        // Close file if open
+        auto file_it = g_log_files.find(type);
+        if (file_it != g_log_files.end() && file_it->second.is_open()) {
+            file_it->second.close();
+        }
 
-            // Remove old previous file if it exists
-            std::filesystem::remove(previous_log_path, ec);
+        // Rotate
+        filesystem::path previous = it->second.parent_path() /
+            (WebDashConst::Public::kLogRotationPrefix + it->second.filename().string());
+        filesystem::remove(previous, ec);
+        filesystem::rename(it->second, previous, ec);
 
-            // Rename current to previous
-            std::filesystem::rename(full_log_file_path, previous_log_path, ec);
-
-            // Create fresh log file with initialization message
-            std::ofstream out(full_log_file_path.c_str());
-            out << curr_time << ": Log rotated (previous file exceeded "
-                << (kMaxLogFileSize / (1024 * 1024)) << " MB)." << std::endl;
-            out.close();
+        // Reopen
+        g_log_files[type].open(it->second, std::ios::out | std::ios::app);
+        if (g_log_files[type].is_open()) {
+            g_log_files[type] << GetLogTimestamp() << ": Log rotated (previous file exceeded "
+                              << (kMaxLogFileSize / (1024 * 1024)) << " MB)." << std::endl;
         }
     }
 
-    // Write out the log statement (append mode).
-    std::ofstream out(full_log_file_path.c_str(), std::ofstream::out | std::ofstream::app);
-    out << curr_time << ": " << msg << std::endl;
-    out.close();
+    void InitLogFiles(const filesystem::path& log_directory) {
+        if (g_log_files_initialized && g_log_directory == log_directory) {
+            return;
+        }
+
+        // Close any existing files
+        for (auto& [type, file] : g_log_files) {
+            if (file.is_open()) {
+                file.close();
+            }
+        }
+        g_log_files.clear();
+        g_log_paths.clear();
+
+        g_log_directory = log_directory;
+        filesystem::create_directories(log_directory);
+
+        const std::vector<WebDashType::LogType> types = {
+            WebDashType::LogType::DEBUG,
+            WebDashType::LogType::INFO,
+            WebDashType::LogType::WARN,
+            WebDashType::LogType::ERR,
+            WebDashType::LogType::NOTIFY
+        };
+
+        for (auto type : types) {
+            auto path = log_directory / (string(WebDashConst::Public::kLogFilenamePrefix)
+                        + WebDashType::kLogTypeToString.at(type) + ".txt");
+            g_log_paths[type] = path;
+            CheckAndRotateLog(type);
+            g_log_files[type].open(path, std::ios::out | std::ios::app);
+        }
+
+        g_log_files_initialized = true;
+    }
+
+    // Cleanup on program exit
+    struct LogCleanup {
+        ~LogCleanup() {
+            std::lock_guard<std::mutex> lock(g_log_mutex);
+            for (auto& [type, file] : g_log_files) {
+                if (file.is_open()) {
+                    file.flush();
+                    file.close();
+                }
+            }
+        }
+    };
+    static LogCleanup g_log_cleanup;
+}
+
+
+void WebDashCore::Log(const WebDashType::LogType type,
+                      const std::string msg) {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+
+    filesystem::path log_directory;
+
+    if (_singleton_instance) {
+        log_directory = _GetAndCreateLogDirectory();
+    } else {
+        const char* env_root = getenv(WebDashConst::Public::kEnvVarName);
+        if (env_root == nullptr) {
+            return;  // Can't log before root is found
+        }
+        log_directory = filesystem::path(env_root) / WebDashConst::Public::kTemporaryStorageDir;
+    }
+
+    // Initialize or reinitialize log files if directory changed
+    if (!g_log_files_initialized || g_log_directory != log_directory) {
+        InitLogFiles(log_directory);
+    }
+
+    auto it = g_log_files.find(type);
+    if (it == g_log_files.end() || !it->second.is_open()) {
+        return;
+    }
+
+    it->second << GetLogTimestamp() << ": " << msg << std::endl;
 }
 
 

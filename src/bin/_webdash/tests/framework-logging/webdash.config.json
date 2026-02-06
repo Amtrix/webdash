@@ -1,0 +1,62 @@
+{
+    "commands": [
+        {
+            "name": "test-python",
+            "silent": true,
+            "test-case": "Python logging works at all levels",
+            "actions": [
+                "python3 $.thisDir()/webdash-logtests-python.py",
+                "grep 'webdash-logtests-python.py' $.rootDir()/app-temporary/logging/webdash-logtests/logging.debug.txt | tail -1",
+                "grep 'webdash-logtests-python.py' $.rootDir()/app-temporary/logging/webdash-logtests/logging.info.txt | tail -1",
+                "grep 'webdash-logtests-python.py' $.rootDir()/app-temporary/logging/webdash-logtests/logging.warn.txt | grep -E '(warn|error)' | tail -1"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "test-javascript",
+            "silent": true,
+            "test-case": "JavaScript logging works at all levels",
+            "actions": [
+                "node $.thisDir()/webdash-logtests-javascript.js",
+                "grep 'webdash-logtests-javascript.js' $.rootDir()/app-temporary/logging/webdash-logtests/logging.debug.txt | tail -1",
+                "grep 'webdash-logtests-javascript.js' $.rootDir()/app-temporary/logging/webdash-logtests/logging.info.txt | tail -1",
+                "grep 'webdash-logtests-javascript.js' $.rootDir()/app-temporary/logging/webdash-logtests/logging.warn.txt | grep -E '(warn|error)' | tail -1"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "test-typescript",
+            "silent": true,
+            "test-case": "TypeScript logging works at all levels",
+            "actions": [
+                "node $.thisDir()/dist/webdash-logtests-typescript.js",
+                "grep 'webdash-logtests-typescript.ts' $.rootDir()/app-temporary/logging/webdash-logtests/logging.debug.txt | tail -1",
+                "grep 'webdash-logtests-typescript.ts' $.rootDir()/app-temporary/logging/webdash-logtests/logging.info.txt | tail -1",
+                "grep 'webdash-logtests-typescript.ts' $.rootDir()/app-temporary/logging/webdash-logtests/logging.warn.txt | grep -E '(warn|error)' | tail -1"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "test-cpp",
+            "silent": true,
+            "test-case": "C++ logging works at all levels",
+            "actions": [
+                "g++ -std=c++20 -I$.rootDir()/src/lib/_webdash/executor/include -I$.rootDir()/src/lib/external/json/include -L$.rootDir()/app-persistent/lib -o $.thisDir()/webdash-logtests-cpp $.thisDir()/webdash-logtests-cpp.cpp -lwebdash-executor -lboost_filesystem && $.thisDir()/webdash-logtests-cpp",
+                "grep 'webdash-logtests-cpp.cpp' $.rootDir()/app-temporary/logging/webdash-logtests/logging.debug.txt | tail -1",
+                "grep 'webdash-logtests-cpp.cpp' $.rootDir()/app-temporary/logging/webdash-logtests/logging.info.txt | tail -1",
+                "grep 'webdash-logtests-cpp.cpp' $.rootDir()/app-temporary/logging/webdash-logtests/logging.warn.txt | grep -E '(warn|error)' | tail -1"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "all",
+            "silent": true,
+            "actions": [
+                ":test-python",
+                ":test-javascript",
+                ":test-typescript",
+                ":test-cpp"
+            ]
+        }
+    ]
+}

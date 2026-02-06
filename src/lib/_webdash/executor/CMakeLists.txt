@@ -20,6 +20,7 @@ target_sources(webdash-executor PRIVATE
   src/webdash-config.cpp
   src/webdash-config-task.cpp
   src/webdash-core.cpp
+  src/webdash-project.cpp
   src/webdash-utils.cpp
 )
 

@@ -69,6 +69,7 @@ namespace NATIVE_COMMANDS
     string PING_SERVER = "--ping-server";
     string INSTALL_MODULE = "--install-module";
     string PORT_STATUS = "--port-status";
+    string SERVER_PROCESS_ONCE = "--server-process-once";
 };
 
 
@@ -87,7 +88,8 @@ vector<string> WebDashNativeCommands()
              NATIVE_COMMANDS::_INT_CREATE_PROJECT_CLONER,
              NATIVE_COMMANDS::PING_SERVER,
              NATIVE_COMMANDS::INSTALL_MODULE,
-             NATIVE_COMMANDS::PORT_STATUS };
+             NATIVE_COMMANDS::PORT_STATUS,
+             NATIVE_COMMANDS::SERVER_PROCESS_ONCE };
 }
 
 
@@ -287,11 +289,14 @@ bool CreateProjectCloner_InternalCommand(const vector<string>& arguments) {
  *           `webdash register <path-to-config>`
  *                Attempts to register the file <path-to-config>
  *
+ *           `webdash register <path-to-config> --user <username>`
+ *                Registers the config and runs tasks as the specified user
+ *
  * @param arguments The (command line) arguments.
  * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
  */
 bool Register_Command(const vector<string>& arguments) {
-    if (arguments.size() != 1 && arguments.size() != 2)
+    if (arguments.size() < 1 || arguments.size() > 4)
         return false;
 
     if (arguments[0] != NATIVE_COMMANDS::REGISTER)
@@ -299,12 +304,25 @@ bool Register_Command(const vector<string>& arguments) {
 
 
     string path = string("./") + WebDashCore::GetProjectConfigFilename();
-    if (arguments.size() == 2) path = arguments[1];
+    string runAsUser = "";
+
+    // Parse arguments
+    for (size_t i = 1; i < arguments.size(); i++) {
+        if (arguments[i] == "--user" && i + 1 < arguments.size()) {
+            runAsUser = arguments[++i];
+        } else if (path == string("./") + WebDashCore::GetProjectConfigFilename()) {
+            // First non-option argument is the path
+            path = arguments[i];
+        }
+    }
 
     auto wconfig = WebDashConfig(path);
 
     if (wconfig.LastLodingSucceeded()) {
-        WebDashRegister(wconfig.GetPath());
+        WebDashRegister(wconfig.GetPath(), runAsUser);
+        if (!runAsUser.empty()) {
+            cout << "Registered config to run as user: " << runAsUser << endl;
+        }
         return true;
     }
 
@@ -631,6 +649,46 @@ bool InstallModule_Command(const vector<string>& arguments) {
 
 
 /**
+ * @brief Command: `webdash --server-process-once <path>`.
+ *        Tells the webdash-server to immediately process a config file (runs only tasks with frequency set).
+ *        Useful for debugging scheduled task execution.
+ * @param arguments The (command line) arguments.
+ * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
+ */
+bool ServerProcessOnce_Command(const vector<string>& arguments) {
+    if (arguments.size() != 2)
+        return false;
+
+    if (arguments[0] != NATIVE_COMMANDS::SERVER_PROCESS_ONCE)
+        return false;
+
+    string config_path = arguments[1];
+
+    // Resolve to absolute path if relative
+    if (!fs::path(config_path).is_absolute()) {
+        config_path = fs::absolute(config_path).string();
+    }
+
+    if (!fs::exists(config_path)) {
+        cerr << "Error: Config file not found: " << config_path << endl;
+        return true;
+    }
+
+    cout << "Requesting server to process: " << config_path << endl;
+
+    try {
+        WebDashServerProcessOnce(config_path);
+    } catch (const std::exception& e) {
+        cerr << "Error communicating with server: " << e.what() << endl;
+        cerr << "Is the webdash-server running?" << endl;
+        return true;
+    }
+
+    return true;
+}
+
+
+/**
  * @brief Command: `webdash help` (also `webdash --help` or `webdash -help`).
  * @param arguments The (command line) arguments.
  * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
@@ -662,6 +720,8 @@ bool Help_Command(const vector<string>& arguments) {
                 cout << string(kSpaceOutCommands, ' ') << cmd << ", -h" << endl;
             } else if (cmd == NATIVE_COMMANDS::INSTALL_MODULE) {
                 cout << string(kSpaceOutCommands, ' ') << cmd << " <git-url> [--register]" << endl;
+            } else if (cmd == NATIVE_COMMANDS::SERVER_PROCESS_ONCE) {
+                cout << string(kSpaceOutCommands, ' ') << cmd << " <config-path>" << endl;
             } else {
                 cout << string(kSpaceOutCommands, ' ') << cmd << endl;
             }
@@ -672,6 +732,9 @@ bool Help_Command(const vector<string>& arguments) {
     cout << "EXAMPLES:" << endl;
     cout << "    webdash --install-module git@github.com:user/repo.git" << endl;
     cout << "        Install a module by reading its project-location from webdash.config.json" << endl;
+    cout << endl;
+    cout << "    webdash --server-process-once /path/to/webdash.config.json" << endl;
+    cout << "        Simulate server-style execution (only tasks with frequency)" << endl;
     cout << endl;
     cout << "Run 'webdash --list-registered-configs' to see all registered project configs." << endl;
 
@@ -789,10 +852,11 @@ int ExecuteUserInput(int argc, char **argv) {
      * Miscellaneous information for the user.
      */
 
-    const auto root_directory = WebDashCore::Get().GetWebDashRootDirectory();
-    cout << "Root: " << root_directory << "/" << WebDashCore::GetRootProfileFilename() << endl;
-    cout << "-----------------" << endl;
-    cout.flush();
+    // Root directory info removed for cleaner output
+    // const auto root_directory = WebDashCore::Get().GetWebDashRootDirectory();
+    // cout << "Root: " << root_directory << "/" << WebDashCore::GetRootProfileFilename() << endl;
+    // cout << "-----------------" << endl;
+    // cout.flush();
 
     /*
         // Prints arguments passed in
@@ -836,6 +900,7 @@ int ExecuteUserInput(int argc, char **argv) {
     if (PingServer_Command(arguments)) return 0;
     if (PortStatus_Command(arguments)) return 0;
     if (InstallModule_Command(arguments)) return 0;
+    if (ServerProcessOnce_Command(arguments)) return 0;
     if (Help_Command(arguments)) return 0;
 
     /**

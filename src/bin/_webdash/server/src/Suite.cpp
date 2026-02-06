@@ -5,6 +5,7 @@
 #include <iostream>
 #include <unistd.h>
 #include <fstream>
+#include <pwd.h>
 using namespace std;
 
 Suite::Suite() {
@@ -26,18 +27,42 @@ void Suite::LoadSaved() {
             return;
 
         for (auto it : scripts) {
-            const string path = it.get<std::string>();
+            // Support both old format (just path string) and new format (object with path and user info)
+            if (it.is_string()) {
+                const string path = it.get<std::string>();
+                ifstream configStream;
+                try {
+                    WebDashCore::Get().Log(WebDashType::LogType::INFO, "Loading saved suite configuration: " + path);
+                    configStream.open(path.c_str(), ifstream::in);
+                } catch (...) {
+                    WebDashCore::Get().Log(WebDashType::LogType::ERR, "Issues opening to config file (" + path + "). Something wrong with path?");
+                    continue;
+                }
+                _scripts.emplace_back(WebDashConfig(path));
+            } else if (it.is_object()) {
+                const string path = it["path"].get<std::string>();
+                ifstream configStream;
+                try {
+                    WebDashCore::Get().Log(WebDashType::LogType::INFO, "Loading saved suite configuration: " + path);
+                    configStream.open(path.c_str(), ifstream::in);
+                } catch (...) {
+                    WebDashCore::Get().Log(WebDashType::LogType::ERR, "Issues opening to config file (" + path + "). Something wrong with path?");
+                    continue;
+                }
 
-            ifstream configStream;
-            try {
-                WebDashCore::Get().Log(WebDashType::LogType::INFO, "Loading saved suite configuration: " + path);
-                configStream.open(path.c_str(), ifstream::in);
-            } catch (...) {
-                WebDashCore::Get().Log(WebDashType::LogType::ERR, "Issues opening to config file (" + path + "). Something wrong with path?");
-                continue;
+                WebDashConfig cfg{path};
+                RegisteredConfig rc{cfg};
+                if (it.contains("uid")) {
+                    rc.run_as_uid = it["uid"].get<uid_t>();
+                }
+                if (it.contains("gid")) {
+                    rc.run_as_gid = it["gid"].get<gid_t>();
+                }
+                if (it.contains("home")) {
+                    rc.run_as_home = it["home"].get<std::string>();
+                }
+                _scripts.push_back(rc);
             }
-
-            _scripts.emplace_back(path);
         }
     });
 }
@@ -49,12 +74,36 @@ void Suite::RegisterConfig(const WebDashConfig& config) {
     //
 
     for (const auto& it : _scripts)
-        if (config.GetPath() == it.GetPath())
+        if (config.GetPath() == it.config.GetPath())
             return;
 
     std::lock_guard<std::mutex> lock(_suite_mutex);
 
-    _scripts.push_back(config);
+    _scripts.emplace_back(config);
+
+    SerializeAndSave();
+}
+
+void Suite::RegisterConfig(const WebDashConfig& config, uid_t uid, gid_t gid, const std::string& home) {
+    //
+    // Check for the possibility that we were already given the config file.
+    // If so, update the user info.
+    //
+
+    for (auto& it : _scripts) {
+        if (config.GetPath() == it.config.GetPath()) {
+            std::lock_guard<std::mutex> lock(_suite_mutex);
+            it.run_as_uid = uid;
+            it.run_as_gid = gid;
+            it.run_as_home = home;
+            SerializeAndSave();
+            return;
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(_suite_mutex);
+
+    _scripts.emplace_back(config, uid, gid, home);
 
     SerializeAndSave();
 }
@@ -66,7 +115,7 @@ void Suite::UnRegisterConfig(const string& path) {
     //
 
     for (auto it = _scripts.begin(); it != _scripts.end(); ++it) {
-        if (path == it->GetPath()) {
+        if (path == it->config.GetPath()) {
             std::lock_guard<std::mutex> lock(_suite_mutex);
             _scripts.erase(it);
             SerializeAndSave();
@@ -77,14 +126,14 @@ void Suite::UnRegisterConfig(const string& path) {
 
 void Suite::ReloadAll() {
     for (auto& it : _scripts) {
-        it.Reload();
+        it.config.Reload();
     }
 }
 
 vector<string> Suite::GetRegisteredConfigPaths() {
     vector<string> paths;
     for (const auto& entry : _scripts)
-        paths.push_back(entry.GetPath());
+        paths.push_back(entry.config.GetPath());
     return paths;
 }
 
@@ -120,18 +169,36 @@ void Suite::Run() {
 void Suite::RunOnce() {
     std::lock_guard<std::mutex> lock(_suite_mutex);
 
-    WebDashType::RunConfig run_config;
-    run_config.run_only_with_frequency = true;
+    for (RegisteredConfig& entry : _scripts) {
+        WebDashType::RunConfig run_config;
+        run_config.run_only_with_frequency = true;
 
-    for (WebDashConfig& entry : _scripts)
-        entry.Run("" /* run all */, run_config);
+        // Apply user context if specified
+        run_config.run_as_uid = entry.run_as_uid;
+        run_config.run_as_gid = entry.run_as_gid;
+        run_config.run_as_home = entry.run_as_home;
+
+        entry.config.Run("" /* run all */, run_config);
+    }
 }
 
 void Suite::SerializeAndSave() {
     WebDashCore::Get().WriteToAppStorage("registered-configs.txt", [&](WebDashType::StoreWriteChannel writer) {
         json config_arr;
-        for (const auto& entry : _scripts)
-            config_arr["scripts"].push_back(entry.GetPath());
+        for (const auto& entry : _scripts) {
+            json item;
+            item["path"] = entry.config.GetPath();
+            if (entry.run_as_uid.has_value()) {
+                item["uid"] = entry.run_as_uid.value();
+            }
+            if (entry.run_as_gid.has_value()) {
+                item["gid"] = entry.run_as_gid.value();
+            }
+            if (entry.run_as_home.has_value()) {
+                item["home"] = entry.run_as_home.value();
+            }
+            config_arr["scripts"].push_back(item);
+        }
 
         writer(WebDashType::StorageWriteType::Clear, "");
         writer(WebDashType::StorageWriteType::Append, config_arr.dump());
@@ -142,8 +209,27 @@ void Suite::SerializeAndSave() {
 string Suite::GetRegisteredConfigsJsonDump() {
     json arr;
 
-    for (const auto& entry : _scripts)
-        arr.push_back(entry.GetPath());
+    for (const auto& entry : _scripts) {
+        json item;
+        item["path"] = entry.config.GetPath();
+        if (entry.run_as_uid.has_value()) {
+            item["uid"] = entry.run_as_uid.value();
+            item["gid"] = entry.run_as_gid.value_or(entry.run_as_uid.value());
+            item["home"] = entry.run_as_home.value_or("");
+        }
+        arr.push_back(item);
+    }
 
     return arr.dump();
+}
+
+std::optional<RegisteredConfig> Suite::GetRegisteredConfig(const string& path) {
+    std::lock_guard<std::mutex> lock(_suite_mutex);
+
+    for (const auto& entry : _scripts) {
+        if (entry.config.GetPath() == path) {
+            return entry;
+        }
+    }
+    return std::nullopt;
 }

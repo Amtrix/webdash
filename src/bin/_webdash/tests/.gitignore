@@ -1,2 +1,12 @@
-cloneby-profile-dep
-createby-profile-dep
+# Auto-created test dependencies (cloned/created during tests)
+clonedby-profile-dep/
+createby-profile-dep/
+
+# Test artifacts
+dummy-test-file.txt
+
+# Framework-logging test artifacts
+framework-logging/node_modules/
+framework-logging/package-lock.json
+framework-logging/webdash-logtests-cpp
+framework-logging/dist/

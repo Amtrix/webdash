@@ -1,6 +1,9 @@
 #include <iostream>
 #include <signal.h>
 #include <fstream>
+#include <pwd.h>
+#include <sys/file.h>
+#include <unistd.h>
 
 #include <nlohmann/json.hpp>
 
@@ -10,6 +13,8 @@
 
 #include "Suite.hpp"
 #include "WebDashCore.hpp"
+
+using json = nlohmann::json;
 
 const string _WEBDASH_PROJECT_NAME_ = "webdash-server";
 
@@ -29,10 +34,7 @@ void sigintHandler(int sig_num)
 
         /* Unlock and close lockfile */
         if (pid_fd != -1) {
-			if (lockf(pid_fd, F_ULOCK, 0) < 0) {
-                perror("lockf pid_fd failed.");
-                exit(EXIT_FAILURE);
-            }
+			flock(pid_fd, LOCK_UN);
 			close(pid_fd);
 		}
 
@@ -140,32 +142,64 @@ static void daemonize()
 }
 #endif
 
+// Kill any existing webdash-server process and take over the PID file
+static void ensure_single_instance() {
+    // Try to read existing PID from lockfile
+    ifstream pid_in(pid_file_name);
+    if (pid_in.good()) {
+        pid_t old_pid = 0;
+        pid_in >> old_pid;
+        pid_in.close();
+
+        if (old_pid > 0 && old_pid != getpid()) {
+            // Check if process exists
+            if (kill(old_pid, 0) == 0) {
+                cout << "Killing existing webdash-server (PID " << old_pid << ")..." << endl;
+                // Send SIGTERM first for graceful shutdown
+                if (kill(old_pid, SIGTERM) == 0) {
+                    // Wait a bit for graceful shutdown
+                    usleep(500000); // 500ms
+                    // If still running, force kill
+                    if (kill(old_pid, 0) == 0) {
+                        cout << "Process didn't exit, sending SIGKILL..." << endl;
+                        kill(old_pid, SIGKILL);
+                        usleep(100000); // 100ms
+                    }
+                }
+            }
+        }
+    }
+
+    // Now open and lock the PID file
+    pid_fd = open(pid_file_name, O_RDWR | O_CREAT | O_TRUNC, 0640);
+    if (pid_fd < 0) {
+        cerr << "Failed to open PID file: " << strerror(errno) << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // Try to get exclusive lock (non-blocking)
+    if (flock(pid_fd, LOCK_EX | LOCK_NB) < 0) {
+        cerr << "Failed to lock PID file (another instance starting?): " << strerror(errno) << endl;
+        close(pid_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Write our PID
+    string pid_str = to_string(getpid()) + "\n";
+    if (write(pid_fd, pid_str.c_str(), pid_str.length()) <= 0) {
+        cerr << "Failed to write PID to lockfile: " << strerror(errno) << endl;
+    }
+
+    // Keep pid_fd open to maintain the lock
+    cout << "PID file created: " << pid_file_name << " (PID " << getpid() << ")" << endl;
+}
+
 int execute_main()
 {
     cout << "Starting server..." << endl;
-    /*{
-        // TODO: Handle race condition here.
 
-        if (system("pgrep -c webdash-server > /tmp/webdash_server-proc_count") != 0) {
-            cout << "pgrep failed (counts process 'webdash-server'): Process already exists?" << endl;
-            return 1;
-        }
-
-        ifstream in("/tmp/webdash_server-proc_count");
-        int count;
-        in >> count;
-
-        if(count > 1) {
-            cout << "A webdash-server process is already running." << endl;
-            return 1;
-        }
-    }*/
-
-    // https://github.com/jirihnidek/daemon/blob/master/src/daemon.c
-    // https://www.man7.org/linux/man-pages/man3/daemon.3.html
-    //daemonize();
-
-    //cout << "daemonize() succeeded" << endl;
+    // Ensure only one instance runs - kill any existing server first
+    ensure_single_instance();
 
     // Set handler for SIGINT.
     signal(SIGINT, sigintHandler);
@@ -185,8 +219,6 @@ int execute_main()
     // On the thread that keeps on going, we register a listening callback.
     //
 
-    cout << "Calling Listen X... " << endl;
-
     websocket::Listen([&] (std::string cmd,
                            std::string payload,
                            std::function<void(string)> callback) {
@@ -195,12 +227,41 @@ int execute_main()
         // Adds config to the list of periodically executed files.
         // Special properties of each command then indicate if it is to be
         // executed. Currently, this includes { "frequency": "daily" }.
+        // Payload can be just a path, or JSON: {"path": "...", "user": "username"}
         //
 
         if (cmd == "register") {
             WebDashCore::Get().Log(WebDashType::LogType::INFO, "`register` request received.");
 
-            const string path = payload;
+            string path;
+            std::optional<uid_t> uid;
+            std::optional<gid_t> gid;
+            std::optional<string> home;
+
+            // Try to parse as JSON first
+            try {
+                json j = json::parse(payload);
+                path = j["path"].get<string>();
+
+                if (j.contains("user")) {
+                    string username = j["user"].get<string>();
+                    struct passwd* pw = getpwnam(username.c_str());
+                    if (pw) {
+                        uid = pw->pw_uid;
+                        gid = pw->pw_gid;
+                        home = pw->pw_dir;
+                        WebDashCore::Get().Log(WebDashType::LogType::INFO,
+                            "Registering as user: " + username + " (uid=" + to_string(pw->pw_uid) + ")");
+                    } else {
+                        WebDashCore::Get().Log(WebDashType::LogType::ERR, "Unknown user: " + username);
+                        return;
+                    }
+                }
+            } catch (...) {
+                // Not JSON, treat as plain path
+                path = payload;
+            }
+
             WebDashConfig dash_config(path);
 
             if (dash_config.LastLodingSucceeded() == false) {
@@ -208,7 +269,11 @@ int execute_main()
                 return;
             }
 
-            suite.RegisterConfig(dash_config);
+            if (uid.has_value()) {
+                suite.RegisterConfig(dash_config, uid.value(), gid.value(), home.value());
+            } else {
+                suite.RegisterConfig(dash_config);
+            }
         }
 
         //
@@ -259,6 +324,51 @@ int execute_main()
 
             string cbid = cmd.substr(5);
             callback(cmd + " success");
+        }
+
+        //
+        // Immediately process a specific config (run all tasks with frequency).
+        // Useful for debugging scheduled execution.
+        // Uses the user context if the config is registered with one.
+        //
+
+        if (cmd.substr(0, 12) == "process-once") {
+            WebDashCore::Get().Log(WebDashType::LogType::INFO, "`process-once` request received: " + payload);
+
+            const string path = payload;
+            WebDashConfig dash_config(path);
+
+            if (dash_config.LastLodingSucceeded() == false) {
+                WebDashCore::Get().Log(WebDashType::LogType::ERR, "process-once: Failure on loading config.");
+                if (cmd.length() > 13 && cmd[12] == ':') {
+                    callback(cmd + " error: failed to load config");
+                }
+                return;
+            }
+
+            WebDashType::RunConfig run_config;
+            run_config.run_only_with_frequency = true;
+
+            // Look up user context from registered configs
+            auto registered = suite.GetRegisteredConfig(path);
+            if (registered.has_value()) {
+                run_config.run_as_uid = registered->run_as_uid;
+                run_config.run_as_gid = registered->run_as_gid;
+                run_config.run_as_home = registered->run_as_home;
+                if (run_config.run_as_uid.has_value()) {
+                    WebDashCore::Get().Log(WebDashType::LogType::DEBUG,
+                        "process-once: using registered user context uid=" + to_string(run_config.run_as_uid.value()));
+                }
+            }
+
+            auto results = dash_config.Run("", run_config);
+
+            if (cmd.length() > 13 && cmd[12] == ':') {
+                json response;
+                response["status"] = "success";
+                response["tasks_executed"] = results.size();
+                callback(cmd + " " + response.dump());
+            }
         }
     });
 

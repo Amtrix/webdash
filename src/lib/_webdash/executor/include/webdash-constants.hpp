@@ -137,6 +137,17 @@ namespace Public {
 
 
     // =========================================================================
+    // Task Config Fields
+    // =========================================================================
+
+    /// If true, suppress verbose output for this task.
+    constexpr char kTaskFieldSilent[] = "silent";
+
+    /// Test case description - when present, prints [PASS] or [FAIL] with this message.
+    constexpr char kTaskFieldTestCase[] = "test-case";
+
+
+    // =========================================================================
     // Profile Settings Keys
     // =========================================================================
 
