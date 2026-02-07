@@ -64,6 +64,7 @@
         {
             "name": "systemd",
             "actions": [
+                "sudo chmod +x ./webdash-server.service.setup.sh",
                 "./webdash-server.service.setup.sh",
                 "sudo mkdir -p /lib/systemd/system/default.target.wants",
                 "sudo cp webdash-server.service /lib/systemd/system/default.target.wants/",
