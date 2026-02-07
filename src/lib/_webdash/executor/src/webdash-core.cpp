@@ -491,6 +491,7 @@ vector<pair<string, string>> WebDashCore::GetEnvironmentAdditions() {
 
 vector<WebDashType::GitProjectMetadata> WebDashCore::GetExternalGitProjects() {
     unordered_map<string, WebDashType::GitProjectMetadata> projects;
+    vector<WebDashType::GitProjectMetadata> bundle_projects;  // For bundle entries
 
     auto key_values_from_profile = GetKeyValuesFromRootProfile();
 
@@ -506,7 +507,7 @@ vector<WebDashType::GitProjectMetadata> WebDashCore::GetExternalGitProjects() {
         const vector<string> tokens = json_entry.GetTokens();
 
         // Handle both simple fields (3 tokens: dependencies.0.git)
-        // and array fields (4 tokens: dependencies.0.actions.0)
+        // and array fields (4 tokens: dependencies.0.actions.0 or modules.0.bundle.0)
         if (tokens.size() < 3) {
             continue;
         }
@@ -516,6 +517,15 @@ vector<WebDashType::GitProjectMetadata> WebDashCore::GetExternalGitProjects() {
         const string property_name = tokens[2];
 
         const string value = WebDashUtils::ApplySubstitutions(json_entry.GetValue(), GetPrimaryKeywordSubstitutions());
+
+        // Handle bundle array (4 tokens: modules.0.bundle.0)
+        // Each entry in bundle is a git URL that becomes its own project
+        if (tokens.size() == 4 && property_name == WebDashConst::Public::kModuleFieldBundle) {
+            WebDashType::GitProjectMetadata bundle_entry;
+            bundle_entry.source = value;
+            bundle_projects.push_back(bundle_entry);
+            continue;
+        }
 
         // Handle actions array (4 tokens: dependencies.0.actions.0)
         if (tokens.size() == 4 && property_name == WebDashConst::Public::kModuleFieldActions) {
@@ -554,6 +564,11 @@ vector<WebDashType::GitProjectMetadata> WebDashCore::GetExternalGitProjects() {
     }
 
     vector<WebDashType::GitProjectMetadata> ret;
+
+    // Add bundle projects first
+    for (const auto& bundle_project : bundle_projects) {
+        ret.push_back(bundle_project);
+    }
 
     // Summarize all projects into a vector, each element representing one GIT project.
     for (const auto& element : projects) {

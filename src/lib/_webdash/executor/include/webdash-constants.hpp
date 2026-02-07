@@ -134,6 +134,7 @@ namespace Public {
     constexpr char kModuleFieldActions[] = "actions";  // WebDash task to run for setup (alternative to git)
     constexpr char kModuleFieldWdir[] = "wdir";        // Working directory for actions (supports $.path())
     constexpr char kModuleFieldProjectLocation[] = "project-location";  // Path where project declares it should be installed
+    constexpr char kModuleFieldBundle[] = "bundle";    // Array of git URLs to batch multiple simple git-only modules
 
 
     // =========================================================================
