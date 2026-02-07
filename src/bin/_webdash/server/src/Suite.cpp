@@ -110,20 +110,26 @@ void Suite::RegisterConfig(const WebDashConfig& config, uid_t uid, gid_t gid, co
 
 void Suite::UnRegisterConfig(const string& path) {
     //
-    // Check for the possibility that we were already given the config file.
-    // If so, return (skip insertion).
+    // Remove config from the list if found.
     //
 
+    std::lock_guard<std::mutex> lock(_suite_mutex);
     for (auto it = _scripts.begin(); it != _scripts.end(); ++it) {
-        if (path == it->config.GetPath()) {
-            std::lock_guard<std::mutex> lock(_suite_mutex);
-            _scripts.erase(it);
-            SerializeAndSave();
-            break;
+        try {
+            if (path == it->config.GetPath()) {
+                _scripts.erase(it);
+                try {
+                    SerializeAndSave();
+                } catch (...) {
+                    // Ignore serialization errors during unregister
+                }
+                break;
+            }
+        } catch (...) {
+            // Ignore exceptions during path comparison
         }
     }
 }
-
 void Suite::ReloadAll() {
     for (auto& it : _scripts) {
         it.config.Reload();
@@ -154,7 +160,7 @@ void Suite::Run() {
                 const int log_every_sec = 100;
                 if (elapsed > log_every_sec * 1000 /* 10 seconds */) {
                     timeoflastrun = std::chrono::high_resolution_clock::now();
-                    WebDashCore::Get().Log(WebDashType::LogType::INFO, "Another " + to_string(log_every_sec) + "; total seconds passed: " + to_string(tot_elapsed));
+                    // WebDashCore::Get().Log(WebDashType::LogType::INFO, "Another " + to_string(log_every_sec) + "; total seconds passed: " + to_string(tot_elapsed));
                 }
             }
 

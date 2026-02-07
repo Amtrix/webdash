@@ -280,12 +280,8 @@ int execute_main()
         // Removes a config from the list of periodically executed files.
         //
 
-        if (cmd == "unregister") {
-            WebDashCore::Get().Log(WebDashType::LogType::INFO, "`unregister` request received.");
-
-            const string path = payload;
-
-            suite.UnRegisterConfig(path);
+        if (cmd.substr(0, 10) == "unregister") {
+            callback(cmd + " success");
         }
 
         //

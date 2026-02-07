@@ -353,14 +353,20 @@ bool Unregister_Command(const vector<string>& arguments) {
     string path = string("./") + WebDashCore::GetProjectConfigFilename();
     if (arguments.size() == 2) path = arguments[1];
 
+
     auto wconfig = WebDashConfig(path);
 
     if (wconfig.LastLodingSucceeded()) {
+        // File exists - use the resolved path
         WebDashUnRegister(wconfig.GetPath());
         return true;
     }
 
-    return false;
+    // File doesn't exist - try to unregister with the provided path anyway
+    // (useful for cleaning up stale registrations)
+    auto resolvedPath = std::filesystem::absolute(path).string();
+    WebDashUnRegister(resolvedPath);
+    return true;
 }
 
 

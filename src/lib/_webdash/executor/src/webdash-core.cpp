@@ -55,23 +55,12 @@ WebDashCore::WebDashCore(PrivateCtorClass private_ctor) {
     _CalculateRootDirectory();
 }
 
+static std::once_flag singleton_init_flag;
 
 /* static */ WebDashCore& WebDashCore::Get() {
-    if (_instance_creation_is_ongoing) {
-        throw WebDashException::General("Unable to use ::Get() while the creation of the WebDashCore instance is in progress.");
-    }
-
-    // Instantiate the singleton if not already done so.
-    if (!_singleton_instance.has_value()) {
-        _instance_creation_is_ongoing = true;
+    std::call_once(singleton_init_flag, []() {
         _singleton_instance.emplace(PrivateCtorClass{});
-        _instance_creation_is_ongoing = false;
-
-        assert(_singleton_instance.has_value());
-
-        // Success. WebDash's logging mechanism is possible at this point.
-        _singleton_instance->Log(WebDashType::LogType::DEBUG, "WebDash successfully initialized with root path: " + _singleton_instance->_webdash_root_directory.string());
-    }
+    });
 
     return _singleton_instance.value();
 }

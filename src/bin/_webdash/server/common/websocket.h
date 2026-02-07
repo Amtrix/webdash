@@ -31,35 +31,30 @@ namespace websocket {
     inline void on_message(server* s, websocketpp::connection_hdl hdl, message_ptr msg) {
         (void) s;
 
-        std::cout << "on_message called with hdl: " << hdl.lock().get()
-            << " and message: " << msg->get_payload()
-            << std::endl;
-        WebDashCore::Get().Log(WebDashType::LogType::INFO, "Message Payload: " + msg->get_payload());
-
         string payload = msg->get_payload();
         std::size_t space_index = payload.find(" ");
 
         if (space_index == std::string::npos) {
-            WebDashCore::Get().Log(WebDashType::LogType::ERR, "Message Payload malformed: Could not extract command");
+            std::cerr << "Message Payload malformed: Could not extract command" << std::endl;
             return;
         }
 
         string cmd = payload.substr(0, space_index);
-        WebDashCore::Get().Log(WebDashType::LogType::INFO, "Command: '" + cmd + "'");
+        std::cerr << "DEBUG: cmd='" << cmd << "' first10='" << cmd.substr(0, 10) << "'" << std::endl;
 
         while (space_index < payload.size() && payload[space_index] == ' ') space_index++;
 
         string cmd_payload = payload.substr(space_index);
-        WebDashCore::Get().Log(WebDashType::LogType::INFO, "Command Payload: '" + cmd_payload + "'");
 
-        callback(cmd, cmd_payload, [&](string resp) {
+        std::cerr << "DEBUG: about to call callback with cmd='" << cmd << "'" << std::endl;
+        callback(cmd, cmd_payload, [s, hdl](string resp) {
+            std::cerr << "DEBUG: response callback, sending: " << resp << std::endl;
             s->send(hdl, resp, websocketpp::frame::opcode::text);
         });
+        std::cerr << "DEBUG: callback returned" << std::endl;
     }
 
     inline void on_open(server* s, websocketpp::connection_hdl hdl) {
-        WebDashCore::Get().Log(WebDashType::LogType::INFO, "websocket::on_open.");
-
         (void) s;
         (void) hdl;
     }
@@ -80,10 +75,10 @@ namespace websocket {
         }
     }
 
-    inline void Listen(function<void(string, string, std::function<void(string)>)> callback) {
-        WebDashCore::Get().Log(WebDashType::LogType::INFO, "Attempting to listen to: '9002'");
-
-        websocket::callback = callback;
+    inline void Listen(function<void(string, string, std::function<void(string)>)> cb) {
+        std::cerr << "websocket::Listen called" << std::endl;
+        websocket::callback = cb;
+        std::cerr << "callback set" << std::endl;
 
         try {
             // Set logging settings
@@ -100,15 +95,12 @@ namespace websocket {
 
             // Listen on port 9002
             echo_server.listen(9002);
-            cout << "S1" << endl;
 
             // Start the server accept loop
             echo_server.start_accept();
-            cout << "S2" << endl;
 
             // Start the ASIO io_service run loop
             echo_server.run();
-            cout << "S3" << endl;
 
             is_closed = true;
         } catch (websocketpp::exception const & e) {
@@ -118,4 +110,3 @@ namespace websocket {
         }
     }
 }
-
