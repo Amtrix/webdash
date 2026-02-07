@@ -21,3 +21,4 @@
 # Python cache
 __pycache__/
 *.pyc
+src/static/withings-garmin-sync/
