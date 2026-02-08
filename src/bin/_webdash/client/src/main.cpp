@@ -73,6 +73,7 @@ namespace NATIVE_COMMANDS
     string WSL_FORWARDED_PORTS_LIST = "--wsl-forwarded-ports-list";
     string WSL_FORWARDED_PORTS_ADD = "--wsl-forwarded-ports-add";
     string WSL_FORWARDED_PORTS_REMOVE = "--wsl-forwarded-ports-remove";
+    string REAPPLY_PROFILE = "--reapply-profile";
 };
 
 
@@ -95,7 +96,8 @@ vector<string> WebDashNativeCommands()
              NATIVE_COMMANDS::SERVER_PROCESS_ONCE,
              NATIVE_COMMANDS::WSL_FORWARDED_PORTS_LIST,
              NATIVE_COMMANDS::WSL_FORWARDED_PORTS_ADD,
-             NATIVE_COMMANDS::WSL_FORWARDED_PORTS_REMOVE };
+             NATIVE_COMMANDS::WSL_FORWARDED_PORTS_REMOVE,
+             NATIVE_COMMANDS::REAPPLY_PROFILE };
 }
 
 
@@ -280,6 +282,58 @@ bool CreateProjectCloner_InternalCommand(const vector<string>& arguments) {
 
         writer(WebDashType::StorageWriteType::End, "");
     });
+
+    return true;
+}
+
+
+/**
+ * @brief Command: `webdash --reapply-profile`.
+ *
+ * Re-generates initialize-projects.sh from the current webdash-profile.json
+ * and executes it, applying any new modules or dependencies without running
+ * the full setup-webdash.sh script.
+ *
+ * @param arguments The (command line) arguments.
+ * @returns True if handled; false otherwise.
+ */
+bool ReapplyProfile_Command(const vector<string>& arguments) {
+    if (arguments.size() != 1)
+        return false;
+
+    if (arguments[0] != NATIVE_COMMANDS::REAPPLY_PROFILE)
+        return false;
+
+    // Step 1: Regenerate initialize-projects.sh from webdash-profile.json
+    cout << "Regenerating project initializer from profile..." << endl;
+    bool cloner_ok = CreateProjectCloner_InternalCommand({NATIVE_COMMANDS::_INT_CREATE_PROJECT_CLONER});
+    if (!cloner_ok) {
+        cerr << "ERROR: Failed to generate initialize-projects.sh" << endl;
+        return true;
+    }
+
+    // Step 2: Execute the generated script
+    string webdash_root = WebDashCore::Get().GetWebDashRootDirectory();
+    string init_script = webdash_root + "/app-persistent/data/webdash-client/initialize-projects.sh";
+
+    if (!filesystem::exists(init_script)) {
+        cerr << "ERROR: Generated script not found at: " << init_script << endl;
+        return true;
+    }
+
+    // Make executable and run
+    filesystem::permissions(init_script,
+        filesystem::perms::owner_exec | filesystem::perms::owner_read | filesystem::perms::owner_write,
+        filesystem::perm_options::add);
+
+    cout << "Running project initializer..." << endl;
+    int ret = system(("bash \"" + init_script + "\"").c_str());
+
+    if (ret != 0) {
+        cerr << "WARNING: Some projects may have failed to initialize (exit code: " << ret << ")" << endl;
+    } else {
+        cout << "Profile re-applied successfully." << endl;
+    }
 
     return true;
 }
@@ -818,6 +872,9 @@ bool Help_Command(const vector<string>& arguments) {
     cout << "    webdash --install-module git@github.com:user/repo.git" << endl;
     cout << "        Install a module by reading its project-location from webdash.config.json" << endl;
     cout << endl;
+    cout << "    webdash --reapply-profile" << endl;
+    cout << "        Re-apply modules/dependencies from webdash-profile.json" << endl;
+    cout << endl;
     cout << "    webdash --server-process-once /path/to/webdash.config.json" << endl;
     cout << "        Simulate server-style execution (only tasks with frequency)" << endl;
     cout << endl;
@@ -987,6 +1044,7 @@ int ExecuteUserInput(int argc, char **argv) {
     if (InstallModule_Command(arguments)) return 0;
     if (ServerProcessOnce_Command(arguments)) return 0;
     if (WslForwardedPorts_Command(arguments)) return 0;
+    if (ReapplyProfile_Command(arguments)) return 0;
     if (Help_Command(arguments)) return 0;
 
     /**
