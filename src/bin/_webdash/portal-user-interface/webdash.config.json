@@ -1,0 +1,4 @@
+{
+    "project-location": "$.rootDir()/src/bin/_webdash/portal-user-interface",
+    "network-shared": "portal"
+}

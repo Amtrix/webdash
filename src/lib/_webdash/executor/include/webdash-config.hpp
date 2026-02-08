@@ -85,6 +85,42 @@ public:
     std::optional<WebDashConfigTask> GetTask(const string command_name);
 
 
+    /**
+     * @brief Whether this config's directory should be served over HTTP.
+     * @returns true if "network-shared" is set (bool true or a string alias).
+     */
+    bool IsNetworkShared() const { return !_network_shared.empty(); }
+
+    /**
+     * @brief Returns the name under which this project is served.
+     *
+     * If "network-shared" was set to true, this is the directory name.
+     * If "network-shared" was set to a string, this is that string.
+     * @returns The network-shared alias for this project.
+     */
+    const std::string& GetNetworkSharedName() const { return _network_shared; }
+
+    /**
+     * @brief Returns the source directory to serve over HTTP.
+     *
+     * If "network-shared-sourcedir" is set, returns that (with variables resolved).
+     * Otherwise returns the config file's own directory.
+     * @returns The directory path to serve.
+     */
+    std::filesystem::path GetNetworkSharedSourceDir() const {
+        if (!_network_shared_sourcedir.empty())
+            return std::filesystem::path(_network_shared_sourcedir);
+        return _config_filepath.parent_path();
+    }
+
+
+    /**
+     * @brief Returns the directory containing this config file.
+     * @returns The parent directory of the config file path.
+     */
+    std::filesystem::path GetDirectory() const { return _config_filepath.parent_path(); }
+
+
 private:
 
     /**
@@ -123,6 +159,14 @@ private:
 
     // Error message if loading failed.
     string _loading_error;
+
+    // If non-empty, the project directory is served over HTTP by the static file
+    // server. The value is the alias (URL prefix) under which the project is served.
+    string _network_shared;
+
+    // If non-empty, overrides the directory served by the static file server.
+    // Variables like $.rootDir() and $.thisDir() are resolved at parse time.
+    string _network_shared_sourcedir;
 };
 
 

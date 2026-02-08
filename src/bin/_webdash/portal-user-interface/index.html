@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebDash Portal</title>
+    <style>
+        :root {
+            --bg: #0e1117;
+            --surface: #161b22;
+            --border: #30363d;
+            --text: #c9d1d9;
+            --text-dim: #8b949e;
+            --accent: #58a6ff;
+            --green: #3fb950;
+            --red: #f85149;
+            --yellow: #d29922;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 32px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--red);
+            transition: background 0.3s;
+        }
+
+        .status-dot.connected {
+            background: var(--green);
+        }
+
+        .status-label {
+            font-size: 13px;
+            color: var(--text-dim);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px 32px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        @media (max-width: 900px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .panel-header h2 {
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-dim);
+        }
+
+        .panel-header .badge {
+            font-size: 12px;
+            background: var(--border);
+            color: var(--text);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 500;
+        }
+
+        .panel-body {
+            padding: 0;
+            max-height: 520px;
+            overflow-y: auto;
+        }
+
+        /* ─── Registered projects ─── */
+        .project-item {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        }
+
+        .project-item:last-child {
+            border-bottom: none;
+        }
+
+        .project-icon {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent);
+            flex-shrink: 0;
+        }
+
+        .project-path {
+            word-break: break-all;
+            color: var(--text);
+        }
+
+        .project-user {
+            margin-left: auto;
+            color: var(--text-dim);
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+
+        /* ─── Action log ─── */
+        .action-item {
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            display: grid;
+            grid-template-columns: auto 1fr auto auto;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .action-play {
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-dim);
+            cursor: pointer;
+            padding: 2px 5px;
+            font-size: 11px;
+            line-height: 1;
+            transition: color 0.15s, border-color 0.15s;
+        }
+
+        .action-play:hover {
+            color: var(--green);
+            border-color: var(--green);
+        }
+
+        .action-play.running {
+            color: var(--yellow);
+            border-color: var(--yellow);
+            pointer-events: none;
+        }
+
+        .action-item:last-child {
+            border-bottom: none;
+        }
+
+        .action-time {
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        .action-detail {
+            word-break: break-all;
+            color: var(--text);
+        }
+
+        .action-detail .config-name {
+            color: var(--accent);
+        }
+
+        .action-detail .task-name {
+            color: var(--yellow);
+        }
+
+        .action-status {
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .action-status.ok {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--green);
+        }
+
+        .action-status.fail {
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--red);
+        }
+
+        .empty-state {
+            padding: 32px 16px;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 13px;
+        }
+
+        /* ─── Scrollbar ─── */
+        .panel-body::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .panel-body::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .panel-body::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>⚡ WebDash Portal</h1>
+        <div class="status-dot" id="statusDot"></div>
+        <span class="status-label" id="statusLabel">Connecting…</span>
+    </header>
+
+    <div class="container">
+        <div class="panel">
+            <div class="panel-header">
+                <h2>Registered Projects</h2>
+                <span class="badge" id="projectCount">0</span>
+            </div>
+            <div class="panel-body" id="projectList">
+                <div class="empty-state">Connecting to server…</div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-header">
+                <h2>Recent Actions</h2>
+                <span class="badge" id="actionCount">0</span>
+            </div>
+            <div class="panel-body" id="actionList">
+                <div class="empty-state">Waiting for data…</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ────────────────────────────────────────────────────────
+        //  HTTP API client — polls the same port the page is served from
+        // ────────────────────────────────────────────────────────
+
+        const POLL_MS = 500;
+        let connected = false;
+
+        function apiUrl(endpoint) {
+            // Same origin, /_api/ prefix
+            return `${location.protocol}//${location.host}/_api/${endpoint}`;
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  Polling loop
+        // ────────────────────────────────────────────────────────
+
+        async function poll() {
+            try {
+                const [projectsResp, actionsResp] = await Promise.all([
+                    fetch(apiUrl('list-configs')),
+                    fetch(apiUrl('recent-actions')),
+                ]);
+
+                if (!projectsResp.ok || !actionsResp.ok) throw new Error('bad status');
+
+                const projects = await projectsResp.json();
+                const actions = await actionsResp.json();
+
+                renderProjects(projects);
+                renderActions(actions);
+
+                if (!connected) { connected = true; setStatus(true); }
+            } catch (e) {
+                if (connected) { connected = false; setStatus(false); }
+            }
+
+            setTimeout(poll, POLL_MS);
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  Rendering
+        // ────────────────────────────────────────────────────────
+
+        function renderProjects(projects) {
+            const el = document.getElementById('projectList');
+            document.getElementById('projectCount').textContent = projects.length;
+
+            if (projects.length === 0) {
+                el.innerHTML = '<div class="empty-state">No registered projects</div>';
+                return;
+            }
+
+            el.innerHTML = projects.map(p => {
+                const fullPath = typeof p === 'string' ? p : p.path;
+                // Show just the parent directory name
+                const parts = fullPath.replace(/\/webdash\.config\.json$/, '').split('/');
+                const path = parts[parts.length - 1] || fullPath;
+                const user = (typeof p === 'object' && p.uid !== undefined)
+                    ? `uid ${p.uid}` : '';
+
+                return `<div class="project-item">
+                    <span class="project-icon"></span>
+                    <span class="project-path" title="${esc(fullPath)}">${esc(path)}</span>
+                    ${user ? `<span class="project-user">${esc(user)}</span>` : ''}
+                </div>`;
+            }).join('');
+        }
+
+        function renderActions(actions) {
+            const el = document.getElementById('actionList');
+            document.getElementById('actionCount').textContent = actions.length;
+
+            if (actions.length === 0) {
+                el.innerHTML = '<div class="empty-state">No actions recorded yet</div>';
+                return;
+            }
+
+            el.innerHTML = actions.map(a => {
+                const ok = a.return_code === 0;
+                const statusCls = ok ? 'ok' : 'fail';
+                const statusTxt = ok ? 'OK' : `exit ${a.return_code}`;
+
+                // Shorten config path: show parent directory name
+                const parts = a.config.replace(/\/webdash\.config\.json$/, '').split('/');
+                const short = parts[parts.length - 1] || parts.slice(-2).join('/');
+
+                // Task name may be "configpath#taskname" — extract just the task name
+                const task = a.task.includes('#') ? a.task.split('#').pop() : a.task;
+
+                const time = a.timestamp.substring(11, 19); // HH:MM:SS
+
+                return `<div class="action-item">
+                    <span class="action-time">${esc(time)}</span>
+                    <span class="action-detail">
+                        <span class="config-name" title="${esc(a.config)}">${esc(short)}</span>
+                        <span class="task-name">#${esc(task)}</span>
+                    </span>
+                    <span class="action-status ${statusCls}">${statusTxt}</span>
+                    <button class="action-play" onclick="runTask(this, '${esc(a.config)}', '${esc(task)}')" title="Re-run this task">▶</button>
+                </div>`;
+            }).join('');
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  Helpers
+        // ────────────────────────────────────────────────────────
+
+        async function runTask(btn, config, task) {
+            btn.classList.add('running');
+            btn.textContent = '⏳';
+            try {
+                const url = apiUrl('run-task')
+                    + '?config=' + encodeURIComponent(config)
+                    + '&task=' + encodeURIComponent(task);
+                const r = await fetch(url);
+                const j = await r.json();
+                if (!j.ok) {
+                    btn.textContent = '✗';
+                    btn.title = j.error || 'failed';
+                } else {
+                    btn.textContent = '✓';
+                }
+            } catch (e) {
+                btn.textContent = '✗';
+            }
+            setTimeout(() => {
+                btn.classList.remove('running');
+                btn.textContent = '▶';
+                btn.title = 'Re-run this task';
+            }, 1500);
+        }
+
+        function esc(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        function setStatus(ok) {
+            document.getElementById('statusDot').classList.toggle('connected', ok);
+            document.getElementById('statusLabel').textContent = ok ? 'Connected' : 'Disconnected';
+        }
+
+        // ── Boot ──
+        poll();
+    </script>
+</body>
+
+</html>

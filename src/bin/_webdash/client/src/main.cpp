@@ -70,6 +70,9 @@ namespace NATIVE_COMMANDS
     string INSTALL_MODULE = "--install-module";
     string PORT_STATUS = "--port-status";
     string SERVER_PROCESS_ONCE = "--server-process-once";
+    string WSL_FORWARDED_PORTS_LIST = "--wsl-forwarded-ports-list";
+    string WSL_FORWARDED_PORTS_ADD = "--wsl-forwarded-ports-add";
+    string WSL_FORWARDED_PORTS_REMOVE = "--wsl-forwarded-ports-remove";
 };
 
 
@@ -89,7 +92,10 @@ vector<string> WebDashNativeCommands()
              NATIVE_COMMANDS::PING_SERVER,
              NATIVE_COMMANDS::INSTALL_MODULE,
              NATIVE_COMMANDS::PORT_STATUS,
-             NATIVE_COMMANDS::SERVER_PROCESS_ONCE };
+             NATIVE_COMMANDS::SERVER_PROCESS_ONCE,
+             NATIVE_COMMANDS::WSL_FORWARDED_PORTS_LIST,
+             NATIVE_COMMANDS::WSL_FORWARDED_PORTS_ADD,
+             NATIVE_COMMANDS::WSL_FORWARDED_PORTS_REMOVE };
 }
 
 
@@ -661,6 +667,79 @@ bool InstallModule_Command(const vector<string>& arguments) {
  * @param arguments The (command line) arguments.
  * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
  */
+/**
+ * @brief Commands: `webdash --wsl-forwarded-ports-list`, `webdash --wsl-forwarded-ports-add <ports...>`,
+ *        `webdash --wsl-forwarded-ports-remove <ports...>`.
+ * Dispatches to the wsl-port-forward.py script.
+ * @param arguments The (command line) arguments.
+ * @returns True if handled; false otherwise.
+ */
+bool WslForwardedPorts_Command(const vector<string>& arguments) {
+    if (arguments.empty())
+        return false;
+
+    string subcmd;
+    bool needs_ports = false;
+
+    if (arguments[0] == NATIVE_COMMANDS::WSL_FORWARDED_PORTS_LIST) {
+        subcmd = "list";
+    } else if (arguments[0] == NATIVE_COMMANDS::WSL_FORWARDED_PORTS_ADD) {
+        subcmd = "forward";
+        needs_ports = true;
+    } else if (arguments[0] == NATIVE_COMMANDS::WSL_FORWARDED_PORTS_REMOVE) {
+        subcmd = "reset";
+        needs_ports = true;
+    } else {
+        return false;
+    }
+
+    if (needs_ports && arguments.size() < 2) {
+        cerr << "Error: At least one port number is required." << endl;
+        cerr << "Usage: webdash " << arguments[0] << " <port1> [port2] ..." << endl;
+        return true;
+    }
+
+    fs::path script = fs::path(WebDashCore::Get().GetWebDashRootDirectory())
+                      / "src" / "bin" / "_webdash" / "port-forward" / "wsl-port-forward.py";
+
+    if (!fs::exists(script)) {
+        cerr << "Error: Port forwarding script not found: " << script << endl;
+        return true;
+    }
+
+    if (needs_ports) {
+        // Validate all port arguments first
+        vector<int> ports;
+        for (size_t i = 1; i < arguments.size(); ++i) {
+            try {
+                int port = std::stoi(arguments[i]);
+                if (port < 1 || port > 65535) {
+                    cerr << "Error: Port must be between 1 and 65535: " << arguments[i] << endl;
+                    return true;
+                }
+                ports.push_back(port);
+            } catch (...) {
+                cerr << "Error: Invalid port number: " << arguments[i] << endl;
+                return true;
+            }
+        }
+
+        bool all_ok = true;
+        for (int port : ports) {
+            string cmd = "python3 " + script.string() + " " + subcmd + " " + to_string(port);
+            int ret = system(cmd.c_str());
+            if (ret != 0) all_ok = false;
+            if (ports.size() > 1) cout << endl;
+        }
+        return true;
+    } else {
+        string cmd = "python3 " + script.string() + " " + subcmd;
+        system(cmd.c_str());
+        return true;
+    }
+}
+
+
 bool ServerProcessOnce_Command(const vector<string>& arguments) {
     if (arguments.size() != 2)
         return false;
@@ -907,6 +986,7 @@ int ExecuteUserInput(int argc, char **argv) {
     if (PortStatus_Command(arguments)) return 0;
     if (InstallModule_Command(arguments)) return 0;
     if (ServerProcessOnce_Command(arguments)) return 0;
+    if (WslForwardedPorts_Command(arguments)) return 0;
     if (Help_Command(arguments)) return 0;
 
     /**

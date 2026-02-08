@@ -1,11 +1,16 @@
 #include "Suite.hpp"
 #include <webdash-config.hpp>
+#include <webdash-config-task.hpp>
 #include <webdash-types.hpp>
 
 #include <iostream>
 #include <unistd.h>
 #include <fstream>
 #include <pwd.h>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 using namespace std;
 
 Suite::Suite() {
@@ -184,7 +189,13 @@ void Suite::RunOnce() {
         run_config.run_as_gid = entry.run_as_gid;
         run_config.run_as_home = entry.run_as_home;
 
-        entry.config.Run("" /* run all */, run_config);
+        auto results = entry.config.Run("" /* run all */, run_config);
+
+        for (const auto& result : results) {
+            if (!result.skipped) {
+                RecordAction(entry.config.GetPath(), result.task_name, result.return_code);
+            }
+        }
     }
 }
 
@@ -238,4 +249,102 @@ std::optional<RegisteredConfig> Suite::GetRegisteredConfig(const string& path) {
         }
     }
     return std::nullopt;
+}
+
+void Suite::RecordAction(const std::string& config_path, const std::string& task_name, int return_code) {
+    // Build ISO-8601 timestamp
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  now.time_since_epoch()) % 1000;
+
+    std::tm tm_buf{};
+    localtime_r(&time_t_now, &tm_buf);
+
+    std::ostringstream oss;
+    oss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S")
+        << '.' << std::setfill('0') << std::setw(3) << ms.count();
+
+    ActionLogEntry entry;
+    entry.timestamp = oss.str();
+    entry.config_path = config_path;
+    entry.task_name = task_name;
+    entry.return_code = return_code;
+
+    std::lock_guard<std::mutex> lock(_action_log_mutex);
+    _action_log.push_back(std::move(entry));
+    while (_action_log.size() > kMaxActionLogSize) {
+        _action_log.pop_front();
+    }
+}
+
+vector<ActionLogEntry> Suite::GetRecentActions(size_t max_count) {
+    std::lock_guard<std::mutex> lock(_action_log_mutex);
+
+    vector<ActionLogEntry> result;
+    size_t count = std::min(max_count, _action_log.size());
+    // Return newest first
+    for (size_t i = 0; i < count; ++i) {
+        result.push_back(_action_log[_action_log.size() - 1 - i]);
+    }
+    return result;
+}
+
+bool Suite::RunTask(const string& config_path, const string& task_name) {
+    // Copy what we need under the lock, then run outside it.
+    std::optional<RegisteredConfig> found_entry;
+    {
+        std::lock_guard<std::mutex> lock(_suite_mutex);
+        for (RegisteredConfig& entry : _scripts) {
+            if (entry.config.GetPath() != config_path)
+                continue;
+            found_entry = entry;
+            break;
+        }
+    }
+    if (!found_entry) return false;
+
+    // Run in a detached thread so the API returns immediately.
+    std::thread([this, entry = std::move(*found_entry), task_name]() mutable {
+        WebDashType::RunConfig run_config;
+        run_config.run_as_uid  = entry.run_as_uid;
+        run_config.run_as_gid  = entry.run_as_gid;
+        run_config.run_as_home = entry.run_as_home;
+        run_config.skip_frequency_check = true;
+
+        auto results = entry.config.Run(task_name, run_config);
+        for (const auto& r : results) {
+            if (!r.skipped) {
+                RecordAction(entry.config.GetPath(), r.task_name, r.return_code);
+            }
+        }
+    }).detach();
+
+    return true;
+}
+
+vector<pair<string, string>> Suite::GetNetworkSharedPaths() {
+    std::lock_guard<std::mutex> lock(_suite_mutex);
+    vector<pair<string, string>> result;
+
+    for (const auto& entry : _scripts) {
+        if (entry.config.IsNetworkShared()) {
+            string project_name = entry.config.GetNetworkSharedName();
+            auto dir = entry.config.GetNetworkSharedSourceDir();
+
+            // Check for name conflicts
+            for (const auto& [existing_name, existing_dir] : result) {
+                if (existing_name == project_name) {
+                    WebDash().Log(WebDashType::LogType::WARN,
+                        "Static file server: name conflict for '" + project_name +
+                        "' between '" + existing_dir + "' and '" + dir.string() +
+                        "'. Use a string alias in \"network-shared\" to resolve.");
+                }
+            }
+
+            result.emplace_back(project_name, dir.string());
+        }
+    }
+
+    return result;
 }

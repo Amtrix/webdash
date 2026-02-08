@@ -6,6 +6,7 @@ FIND_PACKAGE(Boost 1.65 COMPONENTS system filesystem REQUIRED)
 INCLUDE_DIRECTORIES( ${Boost_INCLUDE_DIR} )
 INCLUDE_DIRECTORIES( "$ENV{WEBDASH}/src/common" )
 INCLUDE_DIRECTORIES( "$ENV{WEBDASH}/src/bin/_webdash/server/common" )
+INCLUDE_DIRECTORIES( "$ENV{WEBDASH}/src/bin/_webdash/common-internal" )
 
 set (EXTERNAL_LIB_PATH "$ENV{WEBDASH}/src/lib/external")
 set (CMAKE_CXX_COMPILER /usr/bin/g++)
@@ -18,6 +19,7 @@ include_directories($ENV{WEBDASH}/src/lib/_webdash/executor/include)
 list(APPEND ALL_CPP_FILES
     "src/WebDashCore.cpp"
     "src/Suite.cpp"
+    "src/HttpFileServer.cpp"
 )
 
 

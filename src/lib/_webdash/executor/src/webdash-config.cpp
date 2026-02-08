@@ -292,6 +292,37 @@ vector<WebDashConfigTask> WebDashConfig::Load(const std::filesystem::path config
 
     WebDash().Log(WebDashType::LogType::DEBUG, "Commands loaded. Available count: " + to_string(json_commands.size()));
 
+    // Parse network-shared flag (top-level config property)
+    // Accepts either a boolean (true → use directory name) or a string (custom alias).
+    try {
+        if (json_config.contains(WebDashConst::Public::kConfigFieldNetworkShared)) {
+            auto& val = json_config[WebDashConst::Public::kConfigFieldNetworkShared];
+            if (val.is_boolean() && val.get<bool>()) {
+                // true → use the directory name as the project alias
+                _network_shared = config_filepath.parent_path().filename().string();
+            } else if (val.is_string()) {
+                // string → use as explicit alias
+                _network_shared = val.get<string>();
+            }
+        }
+    } catch (...) {
+        // Not critical, default to empty (not shared)
+    }
+
+    // Parse network-shared-sourcedir (optional directory override)
+    try {
+        if (json_config.contains(WebDashConst::Public::kConfigFieldNetworkSharedSourceDir) &&
+            json_config[WebDashConst::Public::kConfigFieldNetworkSharedSourceDir].is_string()) {
+            _network_shared_sourcedir = json_config[WebDashConst::Public::kConfigFieldNetworkSharedSourceDir].get<string>();
+
+            // Resolve WebDash variables ($.rootDir(), $.thisDir(), etc.)
+            auto substitutions = GetProfileConfigSubtitutions();
+            _network_shared_sourcedir = WebDashUtils::ApplySubstitutions(_network_shared_sourcedir, substitutions);
+        }
+    } catch (...) {
+        // Not critical, default to empty (use config directory)
+    }
+
     // Parse top-level dependencies (applies to all commands in this config)
     json top_level_deps;
     try {

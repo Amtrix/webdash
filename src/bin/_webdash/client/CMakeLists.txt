@@ -24,6 +24,7 @@ target_include_directories(webdash
     "${EXTERNAL_LIB_PATH}/websocketpp"
     "$ENV{WEBDASH}/src/common"
     "$ENV{WEBDASH}/src/lib/_webdash/executor/include"
+    "$ENV{WEBDASH}/src/bin/_webdash/common-internal"
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 

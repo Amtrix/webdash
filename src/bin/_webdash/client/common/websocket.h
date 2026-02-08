@@ -3,6 +3,9 @@
 // Self
 #include "utils.hpp"
 
+// Shared IPC protocol (client ↔ server agreement)
+#include <webdash-ipc.hpp>
+
 // Standard
 #include <cstdlib>
 #include <iostream>
@@ -254,31 +257,25 @@ public:
     /*
      * Sends a message to the WebDash server and waits for a response.
      *
-     * Returns:
-     *     bool - TRUE on SUCCESS.
+     * @param id   Connection ID.
+     * @param cmd  Wire command string (e.g. "ping", "reload").
+     * @param msg  Payload (everything after the space).
+     * @param cb   Callback invoked with the response body (prefix stripped).
+     * @param timeout_seconds  How long to poll for a response.
      */
-    void sendAndWaitForResponse(int id, std::string cmd, std::string msg, std::function<void(string)> cb, int timeout_seconds = 5)
+    void sendAndWaitForResponse(int id, std::string cmd, std::string msg, std::function<void(string)> cb, int timeout_seconds = IpcConfig::kDefaultTimeoutSec)
     {
         con_list::iterator metadata_it = m_connection_list.find(id);
 
         if (metadata_it == m_connection_list.end())
             throw std::runtime_error("Connection with given ID not found.");
 
-        //
-        // Construct the message. Format:
-        //
-        //     <command>:<callback identifier> <message>.
-        //
-        // Send it.
-        //
-
-        string prefix = cmd + ":" + AddLeftPadding(5, '0', to_string(m_message_to_resp_id++));
+        // Build wire message using the shared IPC format:
+        //   "<command>:<callbackID> <payload>"
+        string prefix = cmd + ":" + IpcMsgBuilder::MakeCallbackId(m_message_to_resp_id++);
         send(id, prefix + " " + msg);
 
-        //
-        // Look for response for the specified timeout.
-        //
-
+        // Poll for matching response.
         for (int i = 0; i < timeout_seconds; ++i)
         {
             auto ret = metadata_it->second->get_response(prefix);
@@ -324,14 +321,14 @@ private:
 
 int ConnectEndpoint(websocket_endpoint *endpoint)
 {
-    int id = endpoint->connect("ws://localhost:9002");
+    int id = endpoint->connect(IpcConfig::kWebSocketUri);
 
     if (id == -1) throw std::runtime_error("Error creating connection.");
 
     for (int i = 0; i < 10; ++i)
     {
         if (endpoint->get_metadata(id)->get_status() == "Open") break;
-        usleep(1000 * 100); // 1 milliseconds * 100
+        usleep(1000 * 100); // 100ms
     }
 
     return id;
@@ -341,54 +338,49 @@ int ConnectEndpoint(websocket_endpoint *endpoint)
 void WebDashRegister(string configPath, const string& runAsUser = "")
 {
     websocket_endpoint endpoint;
-
     int id = ConnectEndpoint(&endpoint);
 
+    std::string payload;
     if (runAsUser.empty()) {
-        endpoint.send(id, "register " + configPath);
+        payload = configPath;
     } else {
-        // Send as JSON with user info
-        nlohmann::json payload;
-        payload["path"] = configPath;
-        payload["user"] = runAsUser;
-        endpoint.send(id, "register " + payload.dump());
+        nlohmann::json j;
+        j["path"] = configPath;
+        j["user"] = runAsUser;
+        payload = j.dump();
     }
+
+    // Fire-and-forget: register does not wait for a response.
+    endpoint.send(id, IpcMsgBuilder::FireAndForget(IpcCommand::REGISTER, payload));
 }
 
 
 void WebDashUnRegister(string configPath)
 {
     websocket_endpoint endpoint;
-
     int id = ConnectEndpoint(&endpoint);
 
-    endpoint.sendAndWaitForResponse(
-        id,
-        "unregister",
-        configPath,
-        [&](__attribute__((unused)) string resp){
+    const auto& info = IpcRegistry::Get(IpcCommand::UNREGISTER);
+    endpoint.sendAndWaitForResponse(id, info.wire, configPath,
+        [&](__attribute__((unused)) string resp) {
             cout << "Success: Config was removed from automatic management." << endl;
-    });
+        });
 }
 
 
-/*
- * Send a ping to the WebDash server. This function can only throw upon failure,
- * it should not happen.
+/**
+ * Send a ping to the WebDash server. Throws on failure.
  */
 void WebDashPingServer()
 {
     websocket_endpoint endpoint;
-
     int id = ConnectEndpoint(&endpoint);
 
-    endpoint.sendAndWaitForResponse(id,
-                                    "ping",
-                                    "",
-                                    [&](__attribute__((unused)) string resp)
-    {
-        cout << "Success: Server is running." << endl;
-    });
+    const auto& info = IpcRegistry::Get(IpcCommand::PING);
+    endpoint.sendAndWaitForResponse(id, info.wire, "",
+        [&](__attribute__((unused)) string resp) {
+            cout << "Success: Server is running." << endl;
+        });
 }
 
 
@@ -396,10 +388,10 @@ void WebDashReloadAll()
 {
     websocket_endpoint endpoint;
     int id = ConnectEndpoint(&endpoint);
-    endpoint.sendAndWaitForResponse(id, "reload", "*", [&](string resp)
-    {
-        auto parsed_resp = json::parse(resp);
 
+    const auto& info = IpcRegistry::Get(IpcCommand::RELOAD);
+    endpoint.sendAndWaitForResponse(id, info.wire, "*", [&](string resp) {
+        auto parsed_resp = json::parse(resp);
         for (string elem : parsed_resp)
             cout << "   [OK] " << elem << endl;
     });
@@ -424,19 +416,16 @@ vector<string> WebDashList(string configPath)
 void WebDashConfigList()
 {
     websocket_endpoint endpoint;
-
     int id = ConnectEndpoint(&endpoint);
 
-    endpoint.sendAndWaitForResponse(id, "list-registered-configs", "*", [&](string resp)
-    {
+    const auto& info = IpcRegistry::Get(IpcCommand::LIST_REGISTERED_CONFIGS);
+    endpoint.sendAndWaitForResponse(id, info.wire, "*", [&](string resp) {
         auto parsed_resp = json::parse(resp);
 
         for (auto& elem : parsed_resp) {
             if (elem.is_string()) {
-                // Old format: plain path string
                 cout << "   " << elem.get<string>() << endl;
             } else if (elem.is_object()) {
-                // New format: object with path and optional user info
                 string path = elem["path"].get<string>();
                 if (elem.contains("uid")) {
                     cout << "   " << path << " (user: uid=" << elem["uid"] << ")" << endl;
@@ -456,11 +445,10 @@ void WebDashConfigList()
 void WebDashServerProcessOnce(string configPath)
 {
     websocket_endpoint endpoint;
-
     int id = ConnectEndpoint(&endpoint);
 
-    endpoint.sendAndWaitForResponse(id, "process-once", configPath, [&](string resp)
-    {
+    const auto& info = IpcRegistry::Get(IpcCommand::PROCESS_ONCE);
+    endpoint.sendAndWaitForResponse(id, info.wire, configPath, [&](string resp) {
         try {
             auto parsed_resp = json::parse(resp);
             if (parsed_resp.contains("status") && parsed_resp["status"] == "success") {
@@ -472,5 +460,5 @@ void WebDashServerProcessOnce(string configPath)
         } catch (...) {
             cout << "Response: " << resp << endl;
         }
-    }, 10);
+    }, IpcConfig::kExtendedTimeoutSec);
 }

@@ -1,0 +1,31 @@
+{
+    "project-name": "wsl-port-forward",
+    "description": "Configures Windows/WSL port forwarding for LAN access",
+    "project-location": "$.rootDir()/src/bin/_webdash/port-forward",
+    "commands": [
+        {
+            "name": "port-forward",
+            "description": "Configure a port to be accessible from the local network",
+            "action": "python3 $.thisDir()/wsl-port-forward.py forward $.args()",
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "port-reset",
+            "description": "Remove port forwarding configuration",
+            "action": "python3 $.thisDir()/wsl-port-forward.py reset $.args()",
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "port-whois",
+            "description": "Show what's using a port",
+            "action": "python3 $.thisDir()/wsl-port-forward.py whois $.args()",
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "port-list",
+            "description": "List all configured port forwards",
+            "action": "python3 $.thisDir()/wsl-port-forward.py list",
+            "wdir": "$.thisDir()"
+        }
+    ]
+}

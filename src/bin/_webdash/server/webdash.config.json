@@ -83,6 +83,11 @@
                 "sudo systemctl restart webdash-server.service"
             ],
             "wdir": "$.thisDir()"
+        },
+        {
+            "name": "register-hosts",
+            "action": "bash $.thisDir()/register-hosts.sh",
+            "wdir": "$.thisDir()"
         }
     ]
 }

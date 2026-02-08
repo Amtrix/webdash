@@ -149,6 +149,28 @@ namespace Public {
 
 
     // =========================================================================
+    // Config-Level Fields
+    // =========================================================================
+
+    /// If true, the project directory is served over HTTP by the static file server.
+    /// All files in the config's directory (and subdirectories) become accessible.
+    constexpr char kConfigFieldNetworkShared[] = "network-shared";
+
+    /// Optional override for the directory served by the static file server.
+    /// If set, this directory is served instead of the config's own directory.
+    /// Supports WebDash variable substitution (e.g., $.rootDir(), $.thisDir()).
+    constexpr char kConfigFieldNetworkSharedSourceDir[] = "network-shared-sourcedir";
+
+
+    // =========================================================================
+    // Profile Port Keys
+    // =========================================================================
+
+    /// Port key for the built-in static file server in webdash-profile.json "ports".
+    constexpr char kProfilePortStaticFileServer[] = "static-file-server";
+
+
+    // =========================================================================
     // Profile Settings Keys
     // =========================================================================
 

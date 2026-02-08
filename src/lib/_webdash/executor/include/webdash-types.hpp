@@ -75,11 +75,15 @@ namespace WebDashType {
     struct RunReturn {
         int return_code;
         string output;
+        string task_name;
+        bool skipped;
 
         RunReturn()
         {
             return_code = 0;
             output = "";
+            task_name = "";
+            skipped = false;
         }
     };
 
@@ -107,6 +111,7 @@ namespace WebDashType {
      */
     struct RunConfig {
         bool run_only_with_frequency = false;
+        bool skip_frequency_check = false;  // If true, execute regardless of frequency/timing
         bool redirect_output_to_str = false;
         bool verbose = false;  // Show detailed execution info (Forking, TASKID, etc.)
         std::function<std::optional<WebDashConfigTask>(string)> TaskRetriever;

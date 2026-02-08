@@ -343,6 +343,10 @@ bool is_number(const std::string& s) {
 
 bool WebDashConfigTask::ShouldExecuteTimewise(WebDashType::RunConfig config) {
 
+    // Manual trigger — always run.
+    if (config.skip_frequency_check)
+        return true;
+
     const auto diff = std::chrono::high_resolution_clock::now() - _last_exec_time;
     const auto diff_h = duration_cast<hours>(diff).count();
     const auto diff_ms = duration_cast<milliseconds>(diff).count();
@@ -636,6 +640,8 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
 
     WebDashType::RunReturn ret;
 
+    ret.task_name = this->_taskid;
+
     // Check timing FIRST before any expensive operations like user lookups
     if (!ShouldExecuteTimewise(config)) {
         if (_print_skip_has_happened == false)
@@ -654,6 +660,7 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
             _print_skip_has_happened = true;
         }
 
+        ret.skipped = true;
         return ret;
     }
 
@@ -991,6 +998,7 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
                 if (action_return_code && !_continue_on_error) {
                     std::cerr << "ERROR: Action failed with exit code " << action_return_code << ": " << action << std::endl;
                     auto final_ret = RunExitActions(ret.return_code, effective_config);
+                    final_ret.task_name = ret.task_name;
                     ReportTestCaseResult(final_ret);
                     return final_ret;
                 }
@@ -1001,6 +1009,7 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
                     // Success! We're done.
                     ret.return_code = 0;
                     auto final_ret = RunExitActions(ret.return_code, effective_config);
+                    final_ret.task_name = ret.task_name;
                     ReportTestCaseResult(final_ret);
                     return final_ret;
                 }
@@ -1022,6 +1031,7 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
 
     // Run exit-actions based on final return code
     auto final_ret = RunExitActions(ret.return_code, effective_config);
+    final_ret.task_name = ret.task_name;
 
     // Report test-case result if specified
     ReportTestCaseResult(final_ret);
@@ -1033,6 +1043,7 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config) {
 WebDashType::RunReturn WebDashConfigTask::RunExitActions(int exit_code, WebDashType::RunConfig config) {
     WebDashType::RunReturn ret;
     ret.return_code = exit_code;
+    ret.task_name = this->_taskid;
 
     // If no exit-actions defined, just return the original result
     if (_exit_actions.empty()) {
