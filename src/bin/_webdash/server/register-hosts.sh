@@ -141,4 +141,5 @@ else
 fi
 
 echo ""
-echo "✓ Done. http://webdash.com:8780 should now resolve to localhost."
+echo "✓ Done. http://webdash.com:8780 should now resolve."
+echo "  If the portal still isn't reachable, ensure TCP 8780 is allowed through the WSL firewall (try: webdash port-forward 8780)."

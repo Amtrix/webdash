@@ -11,7 +11,18 @@
 #include <ctime>
 #include <iomanip>
 #include <sstream>
+#include <filesystem>
 using namespace std;
+
+namespace fs = std::filesystem;
+
+static std::optional<fs::file_time_type> try_last_write_time(const std::string& path) {
+    try {
+        return fs::last_write_time(path);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
 
 Suite::Suite() {
     _is_alive = true;
@@ -44,6 +55,7 @@ void Suite::LoadSaved() {
                     continue;
                 }
                 _scripts.emplace_back(WebDashConfig(path));
+                _scripts.back().last_write_time = try_last_write_time(path);
             } else if (it.is_object()) {
                 const string path = it["path"].get<std::string>();
                 ifstream configStream;
@@ -57,6 +69,7 @@ void Suite::LoadSaved() {
 
                 WebDashConfig cfg{path};
                 RegisteredConfig rc{cfg};
+                rc.last_write_time = try_last_write_time(path);
                 if (it.contains("uid")) {
                     rc.run_as_uid = it["uid"].get<uid_t>();
                 }
@@ -82,11 +95,14 @@ void Suite::RegisterConfig(const WebDashConfig& config) {
         if (config.GetPath() == it.config.GetPath())
             return;
 
-    std::lock_guard<std::mutex> lock(_suite_mutex);
+    {
+        std::unique_lock<std::shared_mutex> lock(_suite_mutex);
+        _scripts.emplace_back(config);
+        _scripts.back().last_write_time = try_last_write_time(config.GetPath());
+        SerializeAndSave();
+    }
 
-    _scripts.emplace_back(config);
-
-    SerializeAndSave();
+    NotifyChange();
 }
 
 void Suite::RegisterConfig(const WebDashConfig& config, uid_t uid, gid_t gid, const std::string& home) {
@@ -97,20 +113,26 @@ void Suite::RegisterConfig(const WebDashConfig& config, uid_t uid, gid_t gid, co
 
     for (auto& it : _scripts) {
         if (config.GetPath() == it.config.GetPath()) {
-            std::lock_guard<std::mutex> lock(_suite_mutex);
-            it.run_as_uid = uid;
-            it.run_as_gid = gid;
-            it.run_as_home = home;
-            SerializeAndSave();
+            {
+                std::unique_lock<std::shared_mutex> lock(_suite_mutex);
+                it.run_as_uid = uid;
+                it.run_as_gid = gid;
+                it.run_as_home = home;
+                SerializeAndSave();
+            }
+            NotifyChange();
             return;
         }
     }
 
-    std::lock_guard<std::mutex> lock(_suite_mutex);
+    {
+        std::unique_lock<std::shared_mutex> lock(_suite_mutex);
+        _scripts.emplace_back(config, uid, gid, home);
+        _scripts.back().last_write_time = try_last_write_time(config.GetPath());
+        SerializeAndSave();
+    }
 
-    _scripts.emplace_back(config, uid, gid, home);
-
-    SerializeAndSave();
+    NotifyChange();
 }
 
 void Suite::UnRegisterConfig(const string& path) {
@@ -118,30 +140,43 @@ void Suite::UnRegisterConfig(const string& path) {
     // Remove config from the list if found.
     //
 
-    std::lock_guard<std::mutex> lock(_suite_mutex);
-    for (auto it = _scripts.begin(); it != _scripts.end(); ++it) {
-        try {
-            if (path == it->config.GetPath()) {
-                _scripts.erase(it);
-                try {
-                    SerializeAndSave();
-                } catch (...) {
-                    // Ignore serialization errors during unregister
+    bool changed = false;
+    {
+        std::unique_lock<std::shared_mutex> lock(_suite_mutex);
+        for (auto it = _scripts.begin(); it != _scripts.end(); ++it) {
+            try {
+                if (path == it->config.GetPath()) {
+                    _scripts.erase(it);
+                    changed = true;
+                    try {
+                        SerializeAndSave();
+                    } catch (...) {
+                        // Ignore serialization errors during unregister
+                    }
+                    break;
                 }
-                break;
+            } catch (...) {
+                // Ignore exceptions during path comparison
             }
-        } catch (...) {
-            // Ignore exceptions during path comparison
         }
     }
+
+    if (changed) NotifyChange();
 }
 void Suite::ReloadAll() {
-    for (auto& it : _scripts) {
-        it.config.Reload();
+    {
+        std::unique_lock<std::shared_mutex> lock(_suite_mutex);
+        for (auto& it : _scripts) {
+            it.config.Reload();
+            it.last_write_time = try_last_write_time(it.config.GetPath());
+        }
     }
+
+    NotifyChange();
 }
 
 vector<string> Suite::GetRegisteredConfigPaths() {
+    std::shared_lock<std::shared_mutex> lock(_suite_mutex);
     vector<string> paths;
     for (const auto& entry : _scripts)
         paths.push_back(entry.config.GetPath());
@@ -159,7 +194,7 @@ void Suite::Run() {
         while (_is_alive) {
             const auto curr = std::chrono::high_resolution_clock::now();
             const auto elapsed = duration_cast<std::chrono::milliseconds>(curr - timeoflastrun).count();
-            const auto tot_elapsed = duration_cast<std::chrono::milliseconds>(curr - start).count();
+            [[maybe_unused]] const auto tot_elapsed = duration_cast<std::chrono::milliseconds>(curr - start).count();
 
             {
                 const int log_every_sec = 100;
@@ -178,19 +213,32 @@ void Suite::Run() {
 }
 
 void Suite::RunOnce() {
-    std::lock_guard<std::mutex> lock(_suite_mutex);
+    // Step 1: quick auto-reload pass under exclusive lock.
+    // This keeps config structures coherent for concurrent readers.
+    {
+        std::unique_lock<std::shared_mutex> lock(_suite_mutex);
+        for (RegisteredConfig& entry : _scripts) {
+            if (auto current_mtime = try_last_write_time(entry.config.GetPath())) {
+                if (!entry.last_write_time.has_value() || *current_mtime != *entry.last_write_time) {
+                    entry.config.Reload();
+                    entry.last_write_time = current_mtime;
+                }
+            }
+        }
+    }
 
+    // Step 2: execute scheduled tasks under a shared lock so portal/static-file reads don't hang
+    // while long-running tasks are executing.
+    std::shared_lock<std::shared_mutex> lock(_suite_mutex);
     for (RegisteredConfig& entry : _scripts) {
         WebDashType::RunConfig run_config;
         run_config.run_only_with_frequency = true;
 
-        // Apply user context if specified
         run_config.run_as_uid = entry.run_as_uid;
         run_config.run_as_gid = entry.run_as_gid;
         run_config.run_as_home = entry.run_as_home;
 
         auto results = entry.config.Run("" /* run all */, run_config);
-
         for (const auto& result : results) {
             if (!result.skipped) {
                 RecordAction(entry.config.GetPath(), result.task_name, result.return_code);
@@ -224,6 +272,7 @@ void Suite::SerializeAndSave() {
 }
 
 string Suite::GetRegisteredConfigsJsonDump() {
+    std::shared_lock<std::shared_mutex> lock(_suite_mutex);
     json arr;
 
     for (const auto& entry : _scripts) {
@@ -241,7 +290,7 @@ string Suite::GetRegisteredConfigsJsonDump() {
 }
 
 std::optional<RegisteredConfig> Suite::GetRegisteredConfig(const string& path) {
-    std::lock_guard<std::mutex> lock(_suite_mutex);
+    std::shared_lock<std::shared_mutex> lock(_suite_mutex);
 
     for (const auto& entry : _scripts) {
         if (entry.config.GetPath() == path) {
@@ -271,11 +320,17 @@ void Suite::RecordAction(const std::string& config_path, const std::string& task
     entry.task_name = task_name;
     entry.return_code = return_code;
 
-    std::lock_guard<std::mutex> lock(_action_log_mutex);
-    _action_log.push_back(std::move(entry));
-    while (_action_log.size() > kMaxActionLogSize) {
-        _action_log.pop_front();
+    {
+        std::lock_guard<std::mutex> lock(_action_log_mutex);
+        _action_log.push_back(std::move(entry));
+        while (_action_log.size() > kMaxActionLogSize) {
+            _action_log.pop_front();
+        }
     }
+
+    // Notify listeners (e.g. WebSocket broadcast to portal)
+    // Must be outside the lock — callback calls GetRecentActions() which also locks.
+    NotifyChange();
 }
 
 vector<ActionLogEntry> Suite::GetRecentActions(size_t max_count) {
@@ -294,7 +349,7 @@ bool Suite::RunTask(const string& config_path, const string& task_name) {
     // Copy what we need under the lock, then run outside it.
     std::optional<RegisteredConfig> found_entry;
     {
-        std::lock_guard<std::mutex> lock(_suite_mutex);
+        std::shared_lock<std::shared_mutex> lock(_suite_mutex);
         for (RegisteredConfig& entry : _scripts) {
             if (entry.config.GetPath() != config_path)
                 continue;
@@ -324,7 +379,7 @@ bool Suite::RunTask(const string& config_path, const string& task_name) {
 }
 
 vector<pair<string, string>> Suite::GetNetworkSharedPaths() {
-    std::lock_guard<std::mutex> lock(_suite_mutex);
+    std::shared_lock<std::shared_mutex> lock(_suite_mutex);
     vector<pair<string, string>> result;
 
     for (const auto& entry : _scripts) {

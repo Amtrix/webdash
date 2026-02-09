@@ -6,7 +6,8 @@
  * Serves files from registered project directories that have "network-shared": true
  * in their webdash.config.json. Each project is accessible under its directory name:
  *
- *   http://localhost:<port>/<project-name>/path/to/file
+ *   http://127.0.0.1:<port>/<project-name>/path/to/file
+ *   http://<host-ip>:<port>/<project-name>/path/to/file
  *
  * Also exposes a small REST API under /_api/ for the portal dashboard:
  *
@@ -59,7 +60,13 @@ public:
 
 private:
     void Run();
-    void HandleClient(int client_fd);
+
+    /**
+     * @brief Handle a single HTTP client request.
+     * @returns true if the function took ownership of client_fd (e.g. WebSocket proxy),
+     *          in which case the caller must NOT close the fd.
+     */
+    bool HandleClient(int client_fd);
 
     /**
      * @brief Resolve a URL path to a local file path.
@@ -78,6 +85,14 @@ private:
      * @brief URL-decode a percent-encoded string.
      */
     static std::string UrlDecode(const std::string& str);
+
+    /**
+     * @brief Proxy a WebSocket upgrade request to the internal websocketpp server.
+     * Forwards the original HTTP upgrade request, then relays data bidirectionally.
+     * @param client_fd The incoming client socket.
+     * @param original_request The full HTTP request that was already read.
+     */
+    void ProxyWebSocket(int client_fd, const std::string& original_request);
 
     int _port;
     int _server_fd = -1;

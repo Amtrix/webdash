@@ -88,6 +88,11 @@
             "name": "register-hosts",
             "action": "bash $.thisDir()/register-hosts.sh",
             "wdir": "$.thisDir()"
+        },
+        {
+            "name": "portal-firewall-allow",
+            "action": "bash $.thisDir()/portal-firewall-allow.sh",
+            "wdir": "$.thisDir()"
         }
     ]
 }

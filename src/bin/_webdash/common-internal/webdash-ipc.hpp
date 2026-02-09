@@ -47,6 +47,8 @@ enum class IpcCommand {
     PING,
     PROCESS_ONCE,
     RECENT_ACTIONS,
+    RUN_TASK,
+    WSL_FORWARDED_PORTS_LIST,
 };
 
 
@@ -82,6 +84,8 @@ struct IpcRegistry {
             { IpcCommand::PING,                  "ping",                     true,   "Health-check the server" },
             { IpcCommand::PROCESS_ONCE,          "process-once",             true,   "Immediately run a config's scheduled tasks" },
             { IpcCommand::RECENT_ACTIONS,        "recent-actions",           true,   "Get the most recent server-executed actions" },
+            { IpcCommand::RUN_TASK,               "run-task",                  true,   "Run a specific task by config path and name" },
+            { IpcCommand::WSL_FORWARDED_PORTS_LIST,"wsl-forwarded-ports-list", true,   "List configured WSL forwarded ports (server-side, no client sudo)" },
         };
         return commands;
     }

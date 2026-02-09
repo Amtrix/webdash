@@ -74,6 +74,8 @@ namespace NATIVE_COMMANDS
     string WSL_FORWARDED_PORTS_ADD = "--wsl-forwarded-ports-add";
     string WSL_FORWARDED_PORTS_REMOVE = "--wsl-forwarded-ports-remove";
     string REAPPLY_PROFILE = "--reapply-profile";
+    string BACKUP_START = "--backup-start";
+    string BACKUP_RESTORE = "--backup-restore";
 };
 
 
@@ -97,7 +99,9 @@ vector<string> WebDashNativeCommands()
              NATIVE_COMMANDS::WSL_FORWARDED_PORTS_LIST,
              NATIVE_COMMANDS::WSL_FORWARDED_PORTS_ADD,
              NATIVE_COMMANDS::WSL_FORWARDED_PORTS_REMOVE,
-             NATIVE_COMMANDS::REAPPLY_PROFILE };
+             NATIVE_COMMANDS::REAPPLY_PROFILE,
+             NATIVE_COMMANDS::BACKUP_START,
+             NATIVE_COMMANDS::BACKUP_RESTORE };
 }
 
 
@@ -340,6 +344,59 @@ bool ReapplyProfile_Command(const vector<string>& arguments) {
 
 
 /**
+ * @brief Command: `webdash --backup-start` / `webdash --backup-restore`.
+ *
+ * Runs backup.py from the webdash-file-backup project,
+ * reading configuration from webdash-profile.json's "backup" section.
+ *
+ * @param arguments The (command line) arguments.
+ * @returns True if handled; false otherwise.
+ */
+bool Backup_Command(const vector<string>& arguments) {
+    if (arguments.empty())
+        return false;
+
+    bool is_backup = (arguments[0] == NATIVE_COMMANDS::BACKUP_START);
+    bool is_restore = (arguments[0] == NATIVE_COMMANDS::BACKUP_RESTORE);
+
+    if (!is_backup && !is_restore)
+        return false;
+
+    string webdash_root = WebDashCore::Get().GetWebDashRootDirectory();
+    string backup_script = webdash_root + "/src/bin/_webdash/webdash-file-backup/backup.py";
+
+    if (!filesystem::exists(backup_script)) {
+        cerr << "ERROR: backup.py not found at: " << backup_script << endl;
+        return true;
+    }
+
+    string action = is_backup ? "backup" : "restore";
+
+    // Check for optional --dry-run flag
+    bool dry_run = false;
+    for (size_t i = 1; i < arguments.size(); ++i) {
+        if (arguments[i] == "--dry-run") {
+            dry_run = true;
+        }
+    }
+
+    string cmd = "python3 \"" + backup_script + "\" " + action;
+    if (dry_run) {
+        cmd += " --dry-run";
+    }
+
+    cout << (is_backup ? "Starting backup..." : "Starting restore...") << endl;
+    int ret = system(cmd.c_str());
+
+    if (ret != 0) {
+        cerr << "ERROR: " << action << " failed (exit code: " << ret << ")" << endl;
+    }
+
+    return true;
+}
+
+
+/**
  * @brief Registers the config from tracking by server. Supported command types:
  *
  *           `webdash register`
@@ -505,7 +562,7 @@ bool PortStatus_Command(const vector<string>& arguments) {
     while (fgets(buffer, sizeof(buffer), pipe)) {
         output += buffer;
     }
-    int status = pclose(pipe);
+    pclose(pipe);
 
     if (output.find("LISTEN") == string::npos) {
         cout << "Port " << port << ": " << "\033[32mUNUSED\033[0m" << endl;
@@ -724,7 +781,8 @@ bool InstallModule_Command(const vector<string>& arguments) {
 /**
  * @brief Commands: `webdash --wsl-forwarded-ports-list`, `webdash --wsl-forwarded-ports-add <ports...>`,
  *        `webdash --wsl-forwarded-ports-remove <ports...>`.
- * Dispatches to the wsl-port-forward.py script.
+ * Listing is server-side (via IPC) so privileged checks can be performed without sudo prompts.
+ * Add/remove currently dispatch to the local wsl-port-forward.py tool (Windows admin prompts are interactive).
  * @param arguments The (command line) arguments.
  * @returns True if handled; false otherwise.
  */
@@ -761,6 +819,30 @@ bool WslForwardedPorts_Command(const vector<string>& arguments) {
         return true;
     }
 
+    // List is server-only: the server may run as root under systemd, enabling iptables inspection
+    // without prompting the interactive user for sudo.
+    if (!needs_ports && subcmd == "list") {
+        try {
+            websocket_endpoint endpoint;
+            int id = ConnectEndpoint(&endpoint);
+
+            const auto& info = IpcRegistry::Get(IpcCommand::WSL_FORWARDED_PORTS_LIST);
+            endpoint.sendAndWaitForResponse(id, info.wire, "*", [&](string resp) {
+                cout << resp << endl;
+            });
+
+            return true;
+        } catch (const std::exception& e) {
+            cerr << "Error: webdash-server is not reachable (" << e.what() << ")" << endl;
+            cerr << "This command is server-side. Start the server and try again." << endl;
+            return true;
+        } catch (...) {
+            cerr << "Error: webdash-server is not reachable" << endl;
+            cerr << "This command is server-side. Start the server and try again." << endl;
+            return true;
+        }
+    }
+
     if (needs_ports) {
         // Validate all port arguments first
         vector<int> ports;
@@ -778,11 +860,9 @@ bool WslForwardedPorts_Command(const vector<string>& arguments) {
             }
         }
 
-        bool all_ok = true;
         for (int port : ports) {
             string cmd = "python3 " + script.string() + " " + subcmd + " " + to_string(port);
-            int ret = system(cmd.c_str());
-            if (ret != 0) all_ok = false;
+            system(cmd.c_str());
             if (ports.size() > 1) cout << endl;
         }
         return true;
@@ -877,6 +957,15 @@ bool Help_Command(const vector<string>& arguments) {
     cout << endl;
     cout << "    webdash --server-process-once /path/to/webdash.config.json" << endl;
     cout << "        Simulate server-style execution (only tasks with frequency)" << endl;
+    cout << endl;
+    cout << "    webdash --backup-start" << endl;
+    cout << "        Backup files/dirs listed in webdash-profile.json's backup section" << endl;
+    cout << endl;
+    cout << "    webdash --backup-restore" << endl;
+    cout << "        Restore files/dirs from backup" << endl;
+    cout << endl;
+    cout << "    webdash --backup-start --dry-run" << endl;
+    cout << "        Preview what would be backed up without copying" << endl;
     cout << endl;
     cout << "Run 'webdash --list-registered-configs' to see all registered project configs." << endl;
 
@@ -1045,6 +1134,7 @@ int ExecuteUserInput(int argc, char **argv) {
     if (ServerProcessOnce_Command(arguments)) return 0;
     if (WslForwardedPorts_Command(arguments)) return 0;
     if (ReapplyProfile_Command(arguments)) return 0;
+    if (Backup_Command(arguments)) return 0;
     if (Help_Command(arguments)) return 0;
 
     /**

@@ -1,0 +1,20 @@
+{
+    "project-location": "$.rootDir()/src/static/webdash-file-backup",
+    "commands": [
+        {
+            "name": "backup",
+            "action": "python3 backup.py backup",
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "restore",
+            "action": "python3 backup.py restore",
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "dry-run",
+            "action": "python3 backup.py backup --dry-run",
+            "wdir": "$.thisDir()"
+        }
+    ]
+}

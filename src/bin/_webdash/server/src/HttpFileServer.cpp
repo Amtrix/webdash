@@ -10,13 +10,61 @@
 #include <arpa/inet.h>
 #include <cstring>
 #include <algorithm>
+#include <atomic>
+#include <thread>
 #include <map>
+#include <set>
+
+#include <ifaddrs.h>
+#include <net/if.h>
 
 #include <webdash-core.hpp>
 #include <webdash-types.hpp>
 
 using namespace std;
 namespace fs = std::filesystem;
+
+namespace {
+
+static bool IsWslEnvironment() {
+    // Heuristic: WSL kernels typically include "microsoft" in version/osrelease.
+    // Keep this dependency-free and best-effort.
+    auto file_contains_microsoft = [](const char* path) -> bool {
+        std::ifstream f(path);
+        if (!f.is_open()) return false;
+        std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+        return s.find("microsoft") != std::string::npos || s.find("wsl") != std::string::npos;
+    };
+
+    return file_contains_microsoft("/proc/version") || file_contains_microsoft("/proc/sys/kernel/osrelease");
+}
+
+static std::vector<std::string> GetNonLoopbackIPv4Addrs() {
+    std::set<std::string> uniq;
+    struct ifaddrs* ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) != 0 || !ifaddr) {
+        return {};
+    }
+
+    for (struct ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr) continue;
+        if (ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (ifa->ifa_flags & IFF_LOOPBACK) continue;
+
+        char buf[INET_ADDRSTRLEN] = {0};
+        auto* in = reinterpret_cast<struct sockaddr_in*>(ifa->ifa_addr);
+        if (!inet_ntop(AF_INET, &in->sin_addr, buf, sizeof(buf))) continue;
+
+        std::string ip(buf);
+        if (!ip.empty()) uniq.insert(ip);
+    }
+
+    freeifaddrs(ifaddr);
+    return std::vector<std::string>(uniq.begin(), uniq.end());
+}
+
+}  // namespace
 
 
 HttpFileServer::HttpFileServer(int port,
@@ -88,7 +136,28 @@ void HttpFileServer::Run() {
     }
 
     WebDashCore::Get().Log(WebDashType::LogType::INFO,
-        "Static file server listening on http://localhost:" + to_string(_port));
+        "Static file server listening on 0.0.0.0:" + to_string(_port) + " (all interfaces)");
+    WebDashCore::Get().Log(WebDashType::LogType::INFO,
+        "Portal URL (local): http://127.0.0.1:" + to_string(_port));
+
+    const auto ips = GetNonLoopbackIPv4Addrs();
+    if (!ips.empty()) {
+        WebDashCore::Get().Log(WebDashType::LogType::INFO,
+            "Portal URL (LAN/host): http://" + ips.front() + ":" + to_string(_port));
+        if (ips.size() > 1) {
+            WebDashCore::Get().Log(WebDashType::LogType::DEBUG,
+                "Static file server: " + to_string(ips.size() - 1) + " additional interface address(es) detected");
+        }
+    }
+
+    if (IsWslEnvironment()) {
+        WebDashCore::Get().Log(WebDashType::LogType::INFO,
+            "WSL note: If the portal isn't reachable from Windows/host, open the port: webdash port-forward " + to_string(_port));
+    } else {
+        WebDashCore::Get().Log(WebDashType::LogType::DEBUG,
+            "Firewall note: If the portal isn't reachable remotely, ensure TCP port " + to_string(_port) + " is allowed (ufw/firewalld/nftables)."
+        );
+    }
 
     while (_running) {
         struct sockaddr_in client_addr{};
@@ -106,21 +175,34 @@ void HttpFileServer::Run() {
 
         // Handle each request in its own thread
         std::thread([this, client_fd]() {
-            HandleClient(client_fd);
-            close(client_fd);
+            bool took_ownership = HandleClient(client_fd);
+            if (!took_ownership) {
+                close(client_fd);
+            }
         }).detach();
     }
 }
 
 
-void HttpFileServer::HandleClient(int client_fd) {
+bool HttpFileServer::HandleClient(int client_fd) {
     // Read the HTTP request (we only need the first line)
     char buf[4096];
     ssize_t n = recv(client_fd, buf, sizeof(buf) - 1, 0);
-    if (n <= 0) return;
+    if (n <= 0) return false;
     buf[n] = '\0';
 
     string request(buf);
+
+    // ── WebSocket upgrade: proxy to internal websocketpp server ──────
+    {
+        // Case-insensitive check for "Upgrade: websocket"
+        string lower_req = request;
+        transform(lower_req.begin(), lower_req.end(), lower_req.begin(), ::tolower);
+        if (lower_req.find("upgrade: websocket") != string::npos) {
+            ProxyWebSocket(client_fd, request);
+            return true;  // ProxyWebSocket takes ownership of client_fd
+        }
+    }
 
     // Parse the request line: "GET /path HTTP/1.x"
     if (request.substr(0, 3) != "GET" && request.substr(0, 4) != "HEAD") {
@@ -129,7 +211,7 @@ void HttpFileServer::HandleClient(int client_fd) {
                          "Content-Length: 0\r\n"
                          "\r\n";
         send(client_fd, response.c_str(), response.size(), 0);
-        return;
+        return false;
     }
 
     bool is_head = (request.substr(0, 4) == "HEAD");
@@ -137,7 +219,7 @@ void HttpFileServer::HandleClient(int client_fd) {
     // Extract the URL path
     size_t path_start = request.find(' ') + 1;
     size_t path_end = request.find(' ', path_start);
-    if (path_start == string::npos || path_end == string::npos) return;
+    if (path_start == string::npos || path_end == string::npos) return false;
 
     string url_path = UrlDecode(request.substr(path_start, path_end - path_start));
 
@@ -159,7 +241,7 @@ void HttpFileServer::HandleClient(int client_fd) {
                          "Content-Length: 0\r\n"
                          "\r\n";
         send(client_fd, response.c_str(), response.size(), 0);
-        return;
+        return false;
     }
 
     // ── API routes (/_api/...) ──────────────────────────────────────────
@@ -181,7 +263,7 @@ void HttpFileServer::HandleClient(int client_fd) {
                     sent += s;
                 }
             }
-            return;
+            return false;
         }
     }
 
@@ -195,7 +277,7 @@ void HttpFileServer::HandleClient(int client_fd) {
                          "\r\n";
         if (!is_head) response += body;
         send(client_fd, response.c_str(), response.size(), 0);
-        return;
+        return false;
     }
 
     // Read and serve the file
@@ -208,7 +290,7 @@ void HttpFileServer::HandleClient(int client_fd) {
                          "\r\n";
         if (!is_head) response += body;
         send(client_fd, response.c_str(), response.size(), 0);
-        return;
+        return false;
     }
 
     // Read file content
@@ -234,6 +316,80 @@ void HttpFileServer::HandleClient(int client_fd) {
             sent += s;
         }
     }
+
+    return false;
+}
+
+
+void HttpFileServer::ProxyWebSocket(int client_fd, const std::string& original_request) {
+    // Connect to the internal websocketpp server on localhost:9002
+    int ws_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (ws_fd < 0) {
+        WebDashCore::Get().Log(WebDashType::LogType::ERR,
+            "WS proxy: failed to create socket: " + string(strerror(errno)));
+        close(client_fd);
+        return;
+    }
+
+    struct sockaddr_in ws_addr{};
+    ws_addr.sin_family = AF_INET;
+    ws_addr.sin_port = htons(9002);
+    ws_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    if (connect(ws_fd, (struct sockaddr*)&ws_addr, sizeof(ws_addr)) < 0) {
+        WebDashCore::Get().Log(WebDashType::LogType::ERR,
+            "WS proxy: failed to connect to localhost:9002: " + string(strerror(errno)));
+        close(ws_fd);
+        close(client_fd);
+        return;
+    }
+
+    // Forward the original HTTP upgrade request to websocketpp
+    {
+        size_t sent = 0;
+        while (sent < original_request.size()) {
+            ssize_t s = ::send(ws_fd, original_request.c_str() + sent,
+                               original_request.size() - sent, 0);
+            if (s <= 0) {
+                close(ws_fd);
+                close(client_fd);
+                return;
+            }
+            sent += s;
+        }
+    }
+
+    // Bidirectional relay using poll()
+    // We run two threads: client→ws and ws→client.
+    // When either side closes, we shut down both.
+    std::atomic<bool> alive{true};
+
+    auto relay = [&alive](int from_fd, int to_fd) {
+        char buf[8192];
+        while (alive.load(std::memory_order_relaxed)) {
+            ssize_t n = recv(from_fd, buf, sizeof(buf), 0);
+            if (n <= 0) { alive.store(false); break; }
+            size_t sent = 0;
+            while (sent < (size_t)n) {
+                ssize_t s = ::send(to_fd, buf + sent, n - sent, MSG_NOSIGNAL);
+                if (s <= 0) { alive.store(false); return; }
+                sent += s;
+            }
+        }
+    };
+
+    std::thread upstream(relay, client_fd, ws_fd);
+    relay(ws_fd, client_fd);  // downstream in current thread
+
+    alive.store(false);
+    // Shut down both sockets to unblock the other thread
+    shutdown(client_fd, SHUT_RDWR);
+    shutdown(ws_fd, SHUT_RDWR);
+
+    upstream.join();
+
+    close(ws_fd);
+    close(client_fd);
 }
 
 

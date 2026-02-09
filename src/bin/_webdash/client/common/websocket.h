@@ -97,6 +97,11 @@ public:
         return m_status;
     }
 
+    std::string get_error_reason() const
+    {
+        return m_error_reason;
+    }
+
     void record_sent_message(std::string message)
     {
         m_messages.push_back(">> " + message);
@@ -147,7 +152,7 @@ std::ostream & operator<< (std::ostream & out, connection_metadata const & data)
 class websocket_endpoint
 {
 public:
-    websocket_endpoint () : m_next_id(0)
+    websocket_endpoint () : m_next_id(0), m_message_to_resp_id(0)
     {
         m_endpoint.clear_access_channels(websocketpp::log::alevel::all);
         m_endpoint.clear_error_channels(websocketpp::log::elevel::all);
@@ -325,13 +330,30 @@ int ConnectEndpoint(websocket_endpoint *endpoint)
 
     if (id == -1) throw std::runtime_error("Error creating connection.");
 
-    for (int i = 0; i < 10; ++i)
+    // Wait for the connection to become Open before returning.
+    // Returning too early leads to websocketpp "invalid state" send errors.
+    for (int i = 0; i < 50; ++i) // 5 seconds total
     {
-        if (endpoint->get_metadata(id)->get_status() == "Open") break;
+        auto md = endpoint->get_metadata(id);
+        if (!md) break;
+
+        const auto status = md->get_status();
+        if (status == "Open") return id;
+        if (status == "Failed connecting" || status == "Closed") {
+            auto reason = md->get_error_reason();
+            if (reason.empty()) reason = "unknown";
+            throw std::runtime_error("Error connecting to webdash-server (" + status + "): " + reason);
+        }
+
         usleep(1000 * 100); // 100ms
     }
 
-    return id;
+    {
+        auto md = endpoint->get_metadata(id);
+        const auto status = md ? md->get_status() : std::string("unknown");
+        const auto reason = md ? md->get_error_reason() : std::string("unknown");
+        throw std::runtime_error("Timeout connecting to webdash-server (status: " + status + ", reason: " + reason + ")");
+    }
 }
 
 

@@ -1,6 +1,8 @@
 
 #include <functional>
 #include <iostream>
+#include <set>
+#include <mutex>
 
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
@@ -22,6 +24,8 @@ namespace websocket {
     namespace {
         bool is_closed = false;
         server echo_server;
+        std::set<websocketpp::connection_hdl, std::owner_less<websocketpp::connection_hdl>> connections;
+        std::mutex connections_mutex;
     }
 
     /// The dispatcher handles all incoming commands via registered handlers.
@@ -49,7 +53,29 @@ namespace websocket {
 
     inline void on_open(server* s, websocketpp::connection_hdl hdl) {
         (void) s;
-        (void) hdl;
+        std::lock_guard<std::mutex> lock(connections_mutex);
+        connections.insert(hdl);
+    }
+
+    inline void on_close(server* s, websocketpp::connection_hdl hdl) {
+        (void) s;
+        std::lock_guard<std::mutex> lock(connections_mutex);
+        connections.erase(hdl);
+    }
+
+    /**
+     * Broadcast a message to all connected WebSocket clients.
+     * Used to push updates (e.g. new actions, config changes) to the portal.
+     */
+    inline void Broadcast(const std::string& message) {
+        std::lock_guard<std::mutex> lock(connections_mutex);
+        for (auto& hdl : connections) {
+            try {
+                echo_server.send(hdl, message, websocketpp::frame::opcode::text);
+            } catch (const std::exception& e) {
+                // Connection may have closed; ignore
+            }
+        }
     }
 
     inline void Stop() {
@@ -83,6 +109,7 @@ namespace websocket {
 
             echo_server.set_message_handler(bind(&on_message, &echo_server, ::_1, ::_2));
             echo_server.set_open_handler(bind(&on_open, &echo_server, ::_1));
+            echo_server.set_close_handler(bind(&on_close, &echo_server, ::_1));
 
             echo_server.listen(IpcConfig::kWebSocketPort);
             echo_server.start_accept();

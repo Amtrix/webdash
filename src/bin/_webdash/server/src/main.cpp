@@ -4,6 +4,9 @@
 #include <pwd.h>
 #include <sys/file.h>
 #include <unistd.h>
+#include <filesystem>
+#include <array>
+#include <set>
 
 #include <nlohmann/json.hpp>
 
@@ -264,6 +267,101 @@ int execute_main()
                     }
                     return arr.dump();
                 }
+                if (url_path == "/_api/git-status") {
+                    // Collect unique git repo roots from registered config paths
+                    json arr = json::array();
+                    std::set<std::string> seen_repos;
+                    auto configs_json = json::parse(suite.GetRegisteredConfigsJsonDump());
+
+                    for (const auto& item : configs_json) {
+                        std::string cfg_path = item["path"].get<std::string>();
+                        // Config path is .../webdash.config.json — get its directory
+                        auto dir = std::filesystem::path(cfg_path).parent_path();
+
+                        // Walk up to find .git directory
+                        std::string repo_root;
+                        for (auto d = dir; !d.empty() && d != d.root_path(); d = d.parent_path()) {
+                            if (std::filesystem::exists(d / ".git")) {
+                                repo_root = d.string();
+                                break;
+                            }
+                        }
+                        if (repo_root.empty() || seen_repos.count(repo_root)) continue;
+                        seen_repos.insert(repo_root);
+
+                        // Helper: run a command and capture stdout
+                        auto run_cmd = [](const std::string& cmd) -> std::string {
+                            std::string result;
+                            FILE* pipe = popen(cmd.c_str(), "r");
+                            if (!pipe) return "";
+                            char buf[256];
+                            while (fgets(buf, sizeof(buf), pipe)) result += buf;
+                            pclose(pipe);
+                            // trim trailing newline
+                            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+                                result.pop_back();
+                            return result;
+                        };
+
+                        json repo;
+                        repo["path"] = repo_root;
+                        repo["name"] = std::filesystem::path(repo_root).filename().string();
+
+                        // Use safe.directory=* to avoid ownership checks when running as root under systemd
+                        std::string git_prefix = "git -c safe.directory='*' -C \"" + repo_root + "\" ";
+
+                        repo["branch"] = run_cmd(git_prefix + "rev-parse --abbrev-ref HEAD 2>/dev/null");
+
+                        // Uncommitted changes count
+                        std::string changes_out = run_cmd(git_prefix + "status --porcelain 2>/dev/null | wc -l");
+                        repo["changes"] = std::atoi(changes_out.c_str());
+
+                        // Ahead/behind upstream
+                        std::string ahead_s = run_cmd(git_prefix + "rev-list --count @{u}..HEAD 2>/dev/null");
+                        std::string behind_s = run_cmd(git_prefix + "rev-list --count HEAD..@{u} 2>/dev/null");
+                        repo["ahead"] = ahead_s.empty() ? -1 : std::atoi(ahead_s.c_str());
+                        repo["behind"] = behind_s.empty() ? -1 : std::atoi(behind_s.c_str());
+
+                        arr.push_back(repo);
+                    }
+                    return arr.dump();
+                }
+
+                // Port-forward / IP state report (human-readable text)
+                if (url_path == "/_api/wsl-forwarded-ports-list") {
+                    namespace fs = std::filesystem;
+
+                    fs::path script = fs::path(WebDashCore::Get().GetWebDashRootDirectory())
+                                  / "src" / "bin" / "_webdash" / "port-forward" / "wsl-port-forward.py";
+
+                    json out;
+                    if (!fs::exists(script)) {
+                        out["text"] = "Error: port-forward script not found: " + script.string();
+                        return out.dump();
+                    }
+
+                    auto run_cmd_multiline = [](const std::string& cmd) -> std::string {
+                        std::string result;
+                        FILE* pipe = popen(cmd.c_str(), "r");
+                        if (!pipe) return "";
+                        char buf[512];
+                        while (fgets(buf, sizeof(buf), pipe)) result += buf;
+                        pclose(pipe);
+                        // trim trailing whitespace
+                        while (!result.empty() && (result.back() == '\n' || result.back() == '\r' || result.back() == ' ' || result.back() == '\t'))
+                            result.pop_back();
+                        return result;
+                    };
+
+                    std::string cmd = "python3 \"" + script.string() + "\" list 2>&1";
+                    std::string text = run_cmd_multiline(cmd);
+                    if (text.empty()) {
+                        text = "Error: failed to run port-forward status command";
+                    }
+
+                    out["text"] = text;
+                    return out.dump();
+                }
                 // /_api/run-task?config=<path>&task=<name>
                 if (url_path.rfind("/_api/run-task", 0) == 0) {
                     // Parse query string
@@ -482,6 +580,101 @@ int execute_main()
             reply(arr.dump());
         });
 
+    // ── RUN_TASK ─────────────────────────────────────────────────────────
+    // Runs a specific task. Payload is JSON: {"config": "...", "task": "..."}
+    websocket::dispatcher.On(IpcCommand::RUN_TASK,
+        [&suite](const IpcMsgParser::Parsed& msg, IpcDispatcher::IpcResponder reply) {
+            WebDashCore::Get().Log(WebDashType::LogType::INFO, "`run-task` IPC request received.");
+            json resp;
+            try {
+                json payload = json::parse(msg.payload);
+                string cfg  = payload.value("config", "");
+                string task = payload.value("task", "");
+
+                if (cfg.empty() || task.empty()) {
+                    resp["ok"] = false;
+                    resp["error"] = "missing config or task";
+                } else if (suite.RunTask(cfg, task)) {
+                    resp["ok"] = true;
+                } else {
+                    resp["ok"] = false;
+                    resp["error"] = "config not found";
+                }
+            } catch (const std::exception& e) {
+                resp["ok"] = false;
+                resp["error"] = string("parse error: ") + e.what();
+            }
+            reply(resp.dump());
+        });
+
+    // ── WSL FORWARDED PORTS (server-side list) ───────────────────────────
+    // Lets the client fetch port-forward status without prompting for sudo.
+    // When the server runs as root under systemd, it can read iptables rules.
+    websocket::dispatcher.On(IpcCommand::WSL_FORWARDED_PORTS_LIST,
+        [](const IpcMsgParser::Parsed& /*msg*/, IpcDispatcher::IpcResponder reply) {
+            namespace fs = std::filesystem;
+
+            auto run_capture = [](const std::string& cmd) -> std::string {
+                std::array<char, 512> buffer{};
+                std::string out;
+                FILE* pipe = popen(cmd.c_str(), "r");
+                if (!pipe) return "";
+                while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
+                    out += buffer.data();
+                }
+                pclose(pipe);
+                return out;
+            };
+
+            fs::path script = fs::path(WebDashCore::Get().GetWebDashRootDirectory())
+                              / "src" / "bin" / "_webdash" / "port-forward" / "wsl-port-forward.py";
+
+            if (!fs::exists(script)) {
+                reply("Error: port-forward script not found: " + script.string());
+                return;
+            }
+
+            // Use the same human-readable output as the local tool.
+            // Also ensure we don't block on any interactive prompt.
+            std::string cmd = "python3 \"" + script.string() + "\" list 2>&1";
+            std::string out = run_capture(cmd);
+            if (out.empty()) {
+                reply("Error: failed to run port-forward status command");
+                return;
+            }
+
+            // Trim trailing whitespace/newlines to keep response tidy.
+            while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' ' || out.back() == '\t')) {
+                out.pop_back();
+            }
+
+            reply(out);
+        });
+
+    // ── Wire up Suite change notifications to broadcast to all WebSocket clients ──
+    suite.SetOnChangeCallback([&suite]() {
+        // Build the same JSON payloads the portal needs
+        json push;
+        push["type"] = "update";
+
+        // Configs
+        push["configs"] = json::parse(suite.GetRegisteredConfigsJsonDump());
+
+        // Recent actions
+        auto actions = suite.GetRecentActions(20);
+        json arr = json::array();
+        for (const auto& a : actions) {
+            json item;
+            item["timestamp"]   = a.timestamp;
+            item["config"]      = a.config_path;
+            item["task"]        = a.task_name;
+            item["return_code"] = a.return_code;
+            arr.push_back(item);
+        }
+        push["actions"] = arr;
+
+        websocket::Broadcast("push:update " + push.dump());
+    });
     // ── Start the WebSocket server (blocks) ─────────────────────────────
     websocket::Listen();
 

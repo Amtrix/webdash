@@ -3,10 +3,12 @@
 #include <webdash-config.hpp>
 
 #include <mutex>
+#include <shared_mutex>
 #include <thread>
 #include <optional>
 #include <deque>
 #include <chrono>
+#include <filesystem>
 #include <sys/types.h>
 
 /**
@@ -17,6 +19,7 @@ struct RegisteredConfig {
     std::optional<uid_t> run_as_uid;
     std::optional<gid_t> run_as_gid;
     std::optional<std::string> run_as_home;
+    std::optional<std::filesystem::file_time_type> last_write_time;
 
     RegisteredConfig(const WebDashConfig& c) : config(c) {}
     RegisteredConfig(const WebDashConfig& c, uid_t uid, gid_t gid, const std::string& home)
@@ -80,6 +83,10 @@ public:
     // Returns true if the config was found and the task was dispatched.
     bool RunTask(const string& config_path, const string& task_name);
 
+    /// Set a callback that fires whenever the action log or config list changes.
+    /// Used to push WebSocket updates to connected portal clients.
+    void SetOnChangeCallback(std::function<void()> cb) { _on_change = std::move(cb); }
+
 private:
     // Serializes configuration into a json string. Has to be understood by ::LoadSaved.
     void SerializeAndSave();
@@ -97,7 +104,7 @@ private:
     vector<RegisteredConfig> _scripts;
 
     // Protects areas with parallel access.
-    std::mutex _suite_mutex;
+    std::shared_mutex _suite_mutex;
 
     // Protects the action log.
     std::mutex _action_log_mutex;
@@ -111,4 +118,8 @@ private:
 
     // Signals that all resources should work towards releasing themselves when set to `false`.
     bool _is_alive;
+
+    // Optional callback to notify listeners of state changes (e.g. WebSocket broadcast).
+    std::function<void()> _on_change;
+    void NotifyChange() { if (_on_change) _on_change(); }
 };

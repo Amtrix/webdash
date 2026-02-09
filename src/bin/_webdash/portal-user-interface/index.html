@@ -64,7 +64,7 @@
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1320px;
             margin: 0 auto;
             padding: 24px 32px;
             display: grid;
@@ -246,6 +246,126 @@
             background: var(--border);
             border-radius: 3px;
         }
+
+        /* ─── Refresh button ─── */
+        .btn-refresh {
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-dim);
+            cursor: pointer;
+            padding: 2px 8px;
+            font-size: 12px;
+            transition: color 0.15s, border-color 0.15s;
+        }
+
+        .btn-refresh:hover {
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .btn-refresh.spinning {
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* ─── Git status section ─── */
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        .git-item {
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        }
+
+        .git-item:last-child {
+            border-bottom: none;
+        }
+
+        .git-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .git-dot.clean {
+            background: var(--green);
+        }
+
+        .git-dot.dirty {
+            background: var(--yellow);
+        }
+
+        .git-dot.ahead {
+            background: var(--accent);
+        }
+
+        .git-name {
+            font-weight: 600;
+            color: var(--text);
+            min-width: 160px;
+        }
+
+        .git-branch {
+            color: var(--accent);
+            min-width: 80px;
+        }
+
+        .git-badges {
+            display: flex;
+            gap: 6px;
+            margin-left: auto;
+        }
+
+        .git-badge {
+            font-size: 11px;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .git-badge.clean {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--green);
+        }
+
+        .git-badge.changes {
+            background: rgba(210, 153, 34, 0.15);
+            color: var(--yellow);
+        }
+
+        .git-badge.ahead-badge {
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--accent);
+        }
+
+        .git-badge.behind-badge {
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--red);
+        }
+
+        /* ─── IP states ─── */
+        .mono-pre {
+            padding: 12px 16px;
+            font-size: 12px;
+            line-height: 1.4;
+            white-space: pre;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            color: var(--text);
+        }
     </style>
 </head>
 
@@ -260,7 +380,10 @@
         <div class="panel">
             <div class="panel-header">
                 <h2>Registered Projects</h2>
-                <span class="badge" id="projectCount">0</span>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <button class="btn-refresh" onclick="refreshAll(this)" title="Refresh all">⟳</button>
+                    <span class="badge" id="projectCount">0</span>
+                </div>
             </div>
             <div class="panel-body" id="projectList">
                 <div class="empty-state">Connecting to server…</div>
@@ -276,46 +399,350 @@
                 <div class="empty-state">Waiting for data…</div>
             </div>
         </div>
+
+        <div class="panel">
+            <div class="panel-header">
+                <h2>IP States</h2>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <button class="btn-refresh" onclick="refreshIpStates(this)" title="Refresh IP states">⟳</button>
+                    <span class="badge" id="ipStateCount">0</span>
+                </div>
+            </div>
+            <div class="panel-body" id="ipStateBody">
+                <div class="empty-state">Loading IP states…</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="panel full-width">
+            <div class="panel-header">
+                <h2>Git Status</h2>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <button class="btn-refresh" onclick="refreshGit(this)" title="Refresh git status">⟳</button>
+                    <span class="badge" id="gitCount">0</span>
+                </div>
+            </div>
+            <div class="panel-body" id="gitList">
+                <div class="empty-state">Loading git status…</div>
+            </div>
+        </div>
     </div>
 
     <script>
         // ────────────────────────────────────────────────────────
-        //  HTTP API client — polls the same port the page is served from
+        //  Dual-mode client: WebSocket (push) with HTTP polling fallback
+        //  - Tries WebSocket on port 9002 for real-time push updates
+        //  - Falls back to HTTP polling on same origin if WS unavailable
         // ────────────────────────────────────────────────────────
 
-        const POLL_MS = 500;
-        let connected = false;
+        const RECONNECT_MS = 3000;
+        const POLL_MS = 2000;
+        const WS_CONNECT_TIMEOUT_MS = 3000;
+
+        let mode = 'init';   // 'init' | 'ws' | 'http'
+        let ws = null;
+        let callbackSeq = 0;
+        let pendingCallbacks = {};
+        let pollTimer = null;
+
+        // Used to queue initial loads so opening the portal doesn't fan out a burst of requests.
+        let loadQueue = Promise.resolve();
+        let didInitialIpLoad = false;
+        let didInitialGitLoad = false;
+
+        function enqueueLoad(fn) {
+            loadQueue = loadQueue.then(fn).catch(() => { /* swallow */ });
+            return loadQueue;
+        }
+
+        function wsUrl() {
+            // Connect via same host:port — the HTTP server proxies to the WS server
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            return `${proto}//${location.host}/ws`;
+        }
 
         function apiUrl(endpoint) {
-            // Same origin, /_api/ prefix
             return `${location.protocol}//${location.host}/_api/${endpoint}`;
         }
 
         // ────────────────────────────────────────────────────────
-        //  Polling loop
+        //  IPC wire protocol helpers (for WebSocket mode)
         // ────────────────────────────────────────────────────────
 
-        async function poll() {
+        function makeCbId(seq) {
+            return String(seq).padStart(5, '0');
+        }
+
+        function ipcRequest(command, payload, timeoutMs = 5000) {
+            return new Promise((resolve, reject) => {
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    return reject(new Error('not connected'));
+                }
+                const seq = ++callbackSeq;
+                const cbId = makeCbId(seq);
+                const prefix = `${command}:${cbId}`;
+                const message = `${prefix} ${payload}`;
+
+                const timer = setTimeout(() => {
+                    delete pendingCallbacks[prefix];
+                    reject(new Error('timeout'));
+                }, timeoutMs);
+
+                pendingCallbacks[prefix] = { resolve, reject, timer };
+                ws.send(message);
+            });
+        }
+
+        function handleMessage(raw) {
+            const spaceIdx = raw.indexOf(' ');
+            if (spaceIdx === -1) return;
+
+            const fullCmd = raw.substring(0, spaceIdx);
+            const body = raw.substring(spaceIdx + 1);
+
+            if (pendingCallbacks[fullCmd]) {
+                const cb = pendingCallbacks[fullCmd];
+                clearTimeout(cb.timer);
+                delete pendingCallbacks[fullCmd];
+                cb.resolve(body);
+                return;
+            }
+
+            if (fullCmd === 'push:update') {
+                try {
+                    const data = JSON.parse(body);
+                    if (data.configs) renderProjects(data.configs);
+                    if (data.actions) renderActions(data.actions);
+                } catch (e) {
+                    console.warn('Push parse error:', e);
+                }
+            }
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  WebSocket connection (preferred)
+        // ────────────────────────────────────────────────────────
+
+        function connectWs() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+            const sock = new WebSocket(wsUrl());
+            const connectTimer = setTimeout(() => {
+                // If still connecting after timeout, give up and fall back
+                if (sock.readyState === WebSocket.CONNECTING) {
+                    sock.close();
+                }
+            }, WS_CONNECT_TIMEOUT_MS);
+
+            sock.onopen = () => {
+                clearTimeout(connectTimer);
+                ws = sock;
+                mode = 'ws';
+                stopPolling();
+                setStatus(true, 'ws');
+                enqueueLoad(async () => { await refreshViaWs(); });
+                enqueueLoad(async () => { await fetchGitStatus(); didInitialGitLoad = true; });
+                enqueueLoad(async () => { await fetchIpStates(); didInitialIpLoad = true; });
+            };
+
+            sock.onmessage = (event) => handleMessage(event.data);
+
+            sock.onclose = () => {
+                clearTimeout(connectTimer);
+                ws = null;
+                for (const key of Object.keys(pendingCallbacks)) {
+                    clearTimeout(pendingCallbacks[key].timer);
+                    pendingCallbacks[key].reject(new Error('closed'));
+                }
+                pendingCallbacks = {};
+
+                if (mode === 'ws') {
+                    // Was connected, lost connection — try WS again soon
+                    setStatus(false);
+                    setTimeout(connectWs, RECONNECT_MS);
+                } else {
+                    // Never connected — fall back to HTTP polling
+                    startPolling();
+                }
+            };
+
+            sock.onerror = () => { /* onclose fires after */ };
+        }
+
+        async function refreshViaWs() {
             try {
-                const [projectsResp, actionsResp] = await Promise.all([
+                const [configsRaw, actionsRaw] = await Promise.all([
+                    ipcRequest('list-registered-configs', '*'),
+                    ipcRequest('recent-actions', '20'),
+                ]);
+                renderProjects(JSON.parse(configsRaw));
+                renderActions(JSON.parse(actionsRaw));
+            } catch (e) {
+                console.warn('WS fetch error:', e);
+            }
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  HTTP polling fallback
+        // ────────────────────────────────────────────────────────
+
+        async function pollHttp() {
+            try {
+                const [projResp, actResp] = await Promise.all([
                     fetch(apiUrl('list-configs')),
                     fetch(apiUrl('recent-actions')),
                 ]);
-
-                if (!projectsResp.ok || !actionsResp.ok) throw new Error('bad status');
-
-                const projects = await projectsResp.json();
-                const actions = await actionsResp.json();
-
-                renderProjects(projects);
-                renderActions(actions);
-
-                if (!connected) { connected = true; setStatus(true); }
+                if (!projResp.ok || !actResp.ok) throw new Error('bad status');
+                renderProjects(await projResp.json());
+                renderActions(await actResp.json());
+                if (mode !== 'ws' && mode !== 'http') {
+                    enqueueLoad(async () => { await fetchGitStatus(); didInitialGitLoad = true; });
+                    enqueueLoad(async () => { await fetchIpStates(); didInitialIpLoad = true; });
+                }
+                if (mode !== 'ws') { mode = 'http'; setStatus(true, 'http'); }
             } catch (e) {
-                if (connected) { connected = false; setStatus(false); }
+                if (mode === 'http') setStatus(false);
+            }
+            // Try upgrading to WebSocket periodically
+            if (mode === 'http' && !ws) connectWs();
+            pollTimer = setTimeout(pollHttp, POLL_MS);
+        }
+
+        function startPolling() {
+            if (pollTimer) return;
+            mode = 'http';
+            pollHttp();
+        }
+
+        function stopPolling() {
+            if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  Git Status
+        // ────────────────────────────────────────────────────────
+
+        async function fetchGitStatus() {
+            try {
+                const resp = await fetch(apiUrl('git-status'));
+                if (!resp.ok) throw new Error('bad status');
+                const repos = await resp.json();
+                renderGitStatus(repos);
+            } catch (e) {
+                console.warn('git-status fetch error:', e);
+            }
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  IP States
+        // ────────────────────────────────────────────────────────
+
+        function countPortLines(text) {
+            // Matches lines like: "  192.168.50.87:8780"
+            const m = (text || '').match(/^\s*\d+\.\d+\.\d+\.\d+:\d+\s*$/gm);
+            return m ? m.length : 0;
+        }
+
+        async function fetchIpStates() {
+            const el = document.getElementById('ipStateBody');
+            try {
+                let text = '';
+                if (mode === 'ws' && ws && ws.readyState === WebSocket.OPEN) {
+                    text = await ipcRequest('wsl-forwarded-ports-list', '*', 10000);
+                } else {
+                    const resp = await fetch(apiUrl('wsl-forwarded-ports-list'));
+                    if (!resp.ok) throw new Error('bad status');
+                    // Server returns JSON {text: "..."}
+                    const j = await resp.json();
+                    text = j && j.text ? j.text : '';
+                }
+
+                document.getElementById('ipStateCount').textContent = String(countPortLines(text));
+                if (!text || !text.trim()) {
+                    el.innerHTML = '<div class="empty-state">No IP state data</div>';
+                    return;
+                }
+                el.innerHTML = `<div class="mono-pre">${esc(text)}</div>`;
+            } catch (e) {
+                console.warn('ip-states fetch error:', e);
+                el.innerHTML = '<div class="empty-state">Failed to load IP states</div>';
+            }
+        }
+
+        async function refreshIpStates(btn) {
+            if (btn) { btn.classList.add('spinning'); }
+            try {
+                await fetchIpStates();
+            } catch (e) {
+                console.warn('ip refresh error:', e);
+            }
+            if (btn) { setTimeout(() => btn.classList.remove('spinning'), 400); }
+        }
+
+        function renderGitStatus(repos) {
+            const el = document.getElementById('gitList');
+            document.getElementById('gitCount').textContent = repos.length;
+
+            if (repos.length === 0) {
+                el.innerHTML = '<div class="empty-state">No git repositories found</div>';
+                return;
             }
 
-            setTimeout(poll, POLL_MS);
+            el.innerHTML = repos.map(r => {
+                const isClean = r.changes === 0 && r.ahead <= 0 && r.behind <= 0;
+                const dotCls = r.changes > 0 ? 'dirty' : (r.ahead > 0 ? 'ahead' : 'clean');
+
+                let badges = '';
+                if (isClean) {
+                    badges += '<span class="git-badge clean">✓ clean</span>';
+                } else {
+                    if (r.changes > 0)
+                        badges += `<span class="git-badge changes">${r.changes} change${r.changes !== 1 ? 's' : ''}</span>`;
+                    if (r.ahead > 0)
+                        badges += `<span class="git-badge ahead-badge">↑ ${r.ahead}</span>`;
+                    if (r.behind > 0)
+                        badges += `<span class="git-badge behind-badge">↓ ${r.behind}</span>`;
+                }
+
+                return `<div class="git-item">
+                    <span class="git-dot ${dotCls}"></span>
+                    <span class="git-name" title="${esc(r.path)}">${esc(r.name)}</span>
+                    <span class="git-branch">${esc(r.branch)}</span>
+                    <div class="git-badges">${badges}</div>
+                </div>`;
+            }).join('');
+        }
+
+        async function refreshAll(btn) {
+            if (btn) { btn.classList.add('spinning'); }
+            try {
+                if (mode === 'ws' && ws && ws.readyState === WebSocket.OPEN) {
+                    await refreshViaWs();
+                } else {
+                    const [projResp, actResp] = await Promise.all([
+                        fetch(apiUrl('list-configs')),
+                        fetch(apiUrl('recent-actions')),
+                    ]);
+                    if (projResp.ok) renderProjects(await projResp.json());
+                    if (actResp.ok) renderActions(await actResp.json());
+                }
+                await fetchGitStatus();
+                await fetchIpStates();
+            } catch (e) {
+                console.warn('refresh error:', e);
+            }
+            if (btn) { setTimeout(() => btn.classList.remove('spinning'), 400); }
+        }
+
+        async function refreshGit(btn) {
+            if (btn) { btn.classList.add('spinning'); }
+            try {
+                await fetchGitStatus();
+            } catch (e) {
+                console.warn('git refresh error:', e);
+            }
+            if (btn) { setTimeout(() => btn.classList.remove('spinning'), 400); }
         }
 
         // ────────────────────────────────────────────────────────
@@ -390,11 +817,18 @@
             btn.classList.add('running');
             btn.textContent = '⏳';
             try {
-                const url = apiUrl('run-task')
-                    + '?config=' + encodeURIComponent(config)
-                    + '&task=' + encodeURIComponent(task);
-                const r = await fetch(url);
-                const j = await r.json();
+                let j;
+                if (mode === 'ws' && ws && ws.readyState === WebSocket.OPEN) {
+                    const payload = JSON.stringify({ config, task });
+                    const raw = await ipcRequest('run-task', payload);
+                    j = JSON.parse(raw);
+                } else {
+                    const url = apiUrl('run-task') +
+                        '?config=' + encodeURIComponent(config) +
+                        '&task=' + encodeURIComponent(task);
+                    const resp = await fetch(url);
+                    j = await resp.json();
+                }
                 if (!j.ok) {
                     btn.textContent = '✗';
                     btn.title = j.error || 'failed';
@@ -417,13 +851,19 @@
             return d.innerHTML;
         }
 
-        function setStatus(ok) {
+        function setStatus(ok, transport) {
             document.getElementById('statusDot').classList.toggle('connected', ok);
-            document.getElementById('statusLabel').textContent = ok ? 'Connected' : 'Disconnected';
+            if (!ok) {
+                document.getElementById('statusLabel').textContent = 'Disconnected';
+            } else if (transport === 'ws') {
+                document.getElementById('statusLabel').textContent = 'Connected (WebSocket)';
+            } else {
+                document.getElementById('statusLabel').textContent = 'Connected (HTTP)';
+            }
         }
 
-        // ── Boot ──
-        poll();
+        // ── Boot ── try WebSocket first; falls back to HTTP polling automatically
+        connectWs();
     </script>
 </body>
 
