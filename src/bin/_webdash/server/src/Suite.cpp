@@ -16,6 +16,50 @@ using namespace std;
 
 namespace fs = std::filesystem;
 
+static std::optional<fs::path> try_weakly_canonical(const fs::path& p) {
+    try {
+        return fs::weakly_canonical(p);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+static std::string config_dir_relative_to_webdash_root(const std::string& config_path_str) {
+    fs::path config_path{config_path_str};
+    fs::path config_dir = config_path.parent_path();
+
+    if (config_dir.empty()) {
+        return "";
+    }
+
+    if (!config_path.is_absolute()) {
+        return config_dir.generic_string();
+    }
+
+    const fs::path root_dir = WebDashCore::Get().GetWebDashRootDirectory();
+
+    const auto root_canon = try_weakly_canonical(root_dir);
+    const auto dir_canon = try_weakly_canonical(config_dir);
+    if (!root_canon || !dir_canon) {
+        try {
+            return fs::relative(config_dir, root_dir).generic_string();
+        } catch (...) {
+            return config_dir.generic_string();
+        }
+    }
+
+    try {
+        fs::path rel = fs::relative(*dir_canon, *root_canon);
+        // If outside root, don't return "../.." style paths.
+        if (!rel.empty() && *rel.begin() == "..") {
+            return config_dir.generic_string();
+        }
+        return rel.generic_string();
+    } catch (...) {
+        return config_dir.generic_string();
+    }
+}
+
 static std::optional<fs::file_time_type> try_last_write_time(const std::string& path) {
     try {
         return fs::last_write_time(path);
@@ -278,6 +322,7 @@ string Suite::GetRegisteredConfigsJsonDump() {
     for (const auto& entry : _scripts) {
         json item;
         item["path"] = entry.config.GetPath();
+        item["rel"] = config_dir_relative_to_webdash_root(entry.config.GetPath());
         if (entry.run_as_uid.has_value()) {
             item["uid"] = entry.run_as_uid.value();
             item["gid"] = entry.run_as_gid.value_or(entry.run_as_uid.value());

@@ -144,6 +144,12 @@
             color: var(--text);
         }
 
+        .project-relpath {
+            word-break: break-all;
+            color: var(--text-dim);
+            font-size: 11px;
+        }
+
         .project-user {
             margin-left: auto;
             color: var(--text-dim);
@@ -760,6 +766,7 @@
 
             el.innerHTML = projects.map(p => {
                 const fullPath = typeof p === 'string' ? p : p.path;
+                const relPath = (typeof p === 'object' && p.rel) ? p.rel : '';
                 // Show just the parent directory name
                 const parts = fullPath.replace(/\/webdash\.config\.json$/, '').split('/');
                 const path = parts[parts.length - 1] || fullPath;
@@ -769,6 +776,7 @@
                 return `<div class="project-item">
                     <span class="project-icon"></span>
                     <span class="project-path" title="${esc(fullPath)}">${esc(path)}</span>
+                    ${relPath ? `<span class="project-relpath" title="${esc(relPath)}">${esc(relPath)}</span>` : ''}
                     ${user ? `<span class="project-user">${esc(user)}</span>` : ''}
                 </div>`;
             }).join('');
