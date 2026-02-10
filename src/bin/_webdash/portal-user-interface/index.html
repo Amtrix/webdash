@@ -930,6 +930,121 @@
                 .replace(/\n/g, '\\n');
         }
 
+        // Allow limited inline HTML for project names (from webdash.config.json "project-name").
+        // Security: strip all attributes and disallow non-inline tags to avoid XSS.
+        function sanitizeInlineHtml(input) {
+            const s = String(input ?? '');
+            if (!s) return '';
+
+            const parser = new DOMParser();
+            const doc = parser.parseFromString('<div id="r"></div>', 'text/html');
+            const root = doc.getElementById('r');
+            root.innerHTML = s;
+
+            const allowed = new Set(['B', 'I', 'EM', 'STRONG', 'CODE', 'SMALL', 'SUP', 'SUB', 'BR', 'SPAN']);
+
+            const normalizeCssColor = (raw) => {
+                const v = String(raw ?? '').trim();
+                if (!v) return '';
+                const vl = v.toLowerCase();
+
+                if (/^#[0-9a-f]{3}$/.test(vl) || /^#[0-9a-f]{6}$/.test(vl) || /^#[0-9a-f]{8}$/.test(vl)) return v;
+                if (/^(inherit|initial|unset|currentcolor)$/.test(vl)) return v;
+                if (/^var\(--[a-z0-9_-]+\)$/.test(vl)) return v;
+                if (/^[a-z]+$/.test(vl)) return v; // named colors
+
+                const parseByte = (x) => {
+                    if (!/^\d{1,3}$/.test(x)) return null;
+                    const n = Number(x);
+                    if (!Number.isFinite(n) || n < 0 || n > 255) return null;
+                    return n;
+                };
+
+                const parseAlpha = (x) => {
+                    const t = String(x).trim();
+                    if (!/^(0|1|0?\.\d+)$/.test(t)) return null;
+                    const n = Number(t);
+                    if (!Number.isFinite(n) || n < 0 || n > 1) return null;
+                    return n;
+                };
+
+                // rgb()/rgba()
+                {
+                    const m = vl.match(/^rgba?\(\s*([^\)]+)\s*\)$/);
+                    if (m) {
+                        const parts = m[1].split(',').map(p => p.trim());
+                        if (parts.length === 3 || parts.length === 4) {
+                            const r = parseByte(parts[0]);
+                            const g = parseByte(parts[1]);
+                            const b = parseByte(parts[2]);
+                            if (r !== null && g !== null && b !== null) {
+                                if (parts.length === 3) return `rgb(${r}, ${g}, ${b})`;
+                                const a = parseAlpha(parts[3]);
+                                if (a !== null) return `rgba(${r}, ${g}, ${b}, ${a})`;
+                            }
+                        }
+                    }
+                }
+
+                // hsl()/hsla()
+                {
+                    const m = vl.match(/^hsla?\(\s*([^\)]+)\s*\)$/);
+                    if (m) {
+                        const parts = m[1].split(',').map(p => p.trim());
+                        if (parts.length === 3 || parts.length === 4) {
+                            if (!/^\d{1,3}$/.test(parts[0])) return '';
+                            const h = Number(parts[0]);
+                            const sPct = parts[1];
+                            const lPct = parts[2];
+                            if (!/^\d{1,3}%$/.test(sPct) || !/^\d{1,3}%$/.test(lPct)) return '';
+                            const sNum = Number(sPct.replace('%',''));
+                            const lNum = Number(lPct.replace('%',''));
+                            if (!(Number.isFinite(h) && h >= 0 && h <= 360 && sNum >= 0 && sNum <= 100 && lNum >= 0 && lNum <= 100)) return '';
+                            if (parts.length === 3) return `hsl(${h}, ${sNum}%, ${lNum}%)`;
+                            const a = parseAlpha(parts[3]);
+                            if (a !== null) return `hsla(${h}, ${sNum}%, ${lNum}%, ${a})`;
+                        }
+                    }
+                }
+
+                return '';
+            };
+
+            const walk = (node) => {
+                for (const child of Array.from(node.childNodes)) {
+                    if (child.nodeType === Node.ELEMENT_NODE) {
+                        walk(child);
+
+                        if (!allowed.has(child.tagName)) {
+                            // Unwrap disallowed elements but keep their (sanitized) children.
+                            while (child.firstChild) node.insertBefore(child.firstChild, child);
+                            node.removeChild(child);
+                            continue;
+                        }
+
+                        // Allow only style="color: ..."; strip everything else.
+                        const rawStyle = child.getAttribute('style');
+                        for (const attr of Array.from(child.attributes)) {
+                            child.removeAttribute(attr.name);
+                        }
+                        if (rawStyle) {
+                            const m = String(rawStyle).match(/(?:^|;)\s*color\s*:\s*([^;]+)\s*(?:;|$)/i);
+                            const color = m ? normalizeCssColor(m[1]) : '';
+                            if (color) child.setAttribute('style', `color: ${color};`);
+                        }
+                    } else if (child.nodeType === Node.TEXT_NODE) {
+                        // ok
+                    } else {
+                        // comments, document fragments, etc.
+                        node.removeChild(child);
+                    }
+                }
+            };
+
+            walk(root);
+            return root.innerHTML;
+        }
+
         function renderProjects(projects) {
             const el = document.getElementById('projectList');
             document.getElementById('projectCount').textContent = projects.length;
@@ -946,13 +1061,13 @@
                 const parts = fullPath.replace(/\/webdash\.config\.json$/, '').split('/');
                 const folderName = parts[parts.length - 1] || fullPath;
                 const projName = (typeof p === 'object' && p.projectName) ? String(p.projectName) : '';
-                const displayName = projName || folderName;
+                const displayNameHtml = projName ? sanitizeInlineHtml(projName) : esc(folderName);
                 const user = (typeof p === 'object' && p.uid !== undefined)
                     ? `uid ${p.uid}` : '';
 
                 return `<div class="project-item" onclick="projectClicked('${escJs(fullPath)}')">
                     <span class="project-icon"></span>
-                    <span class="project-path" title="${esc(fullPath)}">${esc(displayName)}</span>
+                    <span class="project-path" title="${esc(fullPath)}">${displayNameHtml}</span>
                     ${relPath ? `<span class="project-relpath" title="${esc(relPath)}">${esc(relPath)}</span>` : ''}
                     ${user ? `<span class="project-user">${esc(user)}</span>` : ''}
                 </div>`;
