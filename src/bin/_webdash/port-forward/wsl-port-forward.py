@@ -254,17 +254,17 @@ def ensure_iptables_allow_rule(port: int,
     else:
         # Unknown: do a definitive sudo check (may prompt) to avoid adding duplicates.
         rule_args = _iptables_rule_args(port, source_ip)
-        r = subprocess.run(["sudo", "iptables", "-C", *rule_args], capture_output=True, text=True)
+        check_cmd = ["iptables", "-C", *rule_args] if os.geteuid() == 0 else ["sudo", "iptables", "-C", *rule_args]
+        r = subprocess.run(check_cmd, capture_output=True, text=True)
         if r.returncode == 0:
             print(f"✓ iptables already allows TCP {port}" + (f" from {source_ip}" if source_ip else ""))
             return True
 
     rule_args = _iptables_rule_args(port, source_ip)
     insert_pos = 3 if insert_pos is None else int(insert_pos)
-    cmd = ["sudo", "iptables", "-I", "INPUT", str(insert_pos), *rule_args[1:]]
     # Note: rule_args includes INPUT already; when inserting we provide chain then position then rest.
-    # Build: sudo iptables -I INPUT <pos> -p tcp [-s ip] --dport <port> -j ACCEPT
-    cmd = ["sudo", "iptables", "-I", "INPUT", str(insert_pos)] + rule_args[1:]
+    # Build: iptables -I INPUT <pos> -p tcp [-s ip] --dport <port> -j ACCEPT
+    cmd = (["iptables", "-I", "INPUT", str(insert_pos)] if os.geteuid() == 0 else ["sudo", "iptables", "-I", "INPUT", str(insert_pos)]) + rule_args[1:]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
@@ -274,6 +274,69 @@ def ensure_iptables_allow_rule(port: int,
 
     print(f"✗ Failed to add iptables rule: {result.stderr.strip()}")
     return False
+
+
+def iptables_ensure_for_configured_ports(source_ip: str | None = None,
+                                        insert_pos: int | None = 3,
+                                        no_source_restriction: bool = False) -> int:
+    """Ensure iptables allows all ports that are configured for forwarding.
+
+    Ports are derived from Windows configuration (firewall rules and/or portproxy).
+    This is designed to be run periodically by webdash-server (often root) so that
+    iptables rules are restored after reboot.
+    """
+    windows = has_windows_integration()
+
+    if not windows:
+        print("No Windows integration (powershell.exe not found); cannot infer forwarded ports.")
+        return 0
+
+    if not source_ip and not no_source_restriction:
+        source_ip = _detect_default_gateway_ip()
+
+    def get_ports_from_windows_firewall() -> set[int]:
+        ports: set[int] = set()
+        code, stdout, _ = run_powershell(
+            "Get-NetFirewallRule -DisplayName 'WSL-Port-*' -ErrorAction SilentlyContinue | "
+            "Select-Object -ExpandProperty DisplayName"
+        )
+        if code != 0 or not stdout.strip():
+            return ports
+        for line in stdout.splitlines():
+            m = re.search(r"WSL-Port-(\d+)", line.strip())
+            if m:
+                try:
+                    ports.add(int(m.group(1)))
+                except Exception:
+                    pass
+        return ports
+
+    def get_ports_from_portproxy() -> set[int]:
+        ports: set[int] = set()
+        code, stdout, _ = run_powershell("netsh interface portproxy show v4tov4")
+        if code != 0 or not stdout.strip():
+            return ports
+        for line in stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and parts[1].isdigit():
+                try:
+                    ports.add(int(parts[1]))
+                except Exception:
+                    pass
+        return ports
+
+    ports = get_ports_from_windows_firewall() | get_ports_from_portproxy()
+    if not ports:
+        print("No configured forwarded ports found (no WSL-Port-* rules and no portproxy entries).")
+        return 0
+
+    all_ok = True
+    for port in sorted(ports):
+        ok = ensure_iptables_allow_rule(port, source_ip=source_ip, insert_pos=insert_pos)
+        if not ok:
+            all_ok = False
+
+    return 0 if all_ok else 1
 
 
 def add_iptables_rule(port: int) -> bool:
@@ -783,6 +846,17 @@ Examples:
 
     subparsers.add_parser("list", help="List all port forwards")
 
+    ipt_ensure = subparsers.add_parser(
+        "iptables-ensure",
+        help="Ensure iptables allows all configured forwarded ports (derived from Windows firewall/portproxy)"
+    )
+    ipt_ensure.add_argument("--source-ip", default=None,
+                            help="Optional source IP restriction (defaults to detected gateway if omitted)")
+    ipt_ensure.add_argument("--insert-pos", type=int, default=3,
+                            help="iptables INPUT insert position (default: 3)")
+    ipt_ensure.add_argument("--no-source-restriction", action="store_true",
+                            help="Do not add a -s restriction even if a gateway is detected")
+
     args = parser.parse_args()
 
     if args.command == "forward":
@@ -801,6 +875,12 @@ Examples:
             source_ip = _detect_default_gateway_ip()
         success = ensure_iptables_allow_rule(args.port, source_ip=source_ip, insert_pos=args.insert_pos)
         sys.exit(0 if success else 1)
+    elif args.command == "iptables-ensure":
+        sys.exit(iptables_ensure_for_configured_ports(
+            source_ip=args.source_ip,
+            insert_pos=args.insert_pos,
+            no_source_restriction=args.no_source_restriction,
+        ))
 
 
 if __name__ == "__main__":

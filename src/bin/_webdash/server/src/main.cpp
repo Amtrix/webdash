@@ -2,11 +2,19 @@
 #include <signal.h>
 #include <fstream>
 #include <pwd.h>
+#include <grp.h>
 #include <sys/file.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <filesystem>
 #include <array>
 #include <set>
+#include <optional>
+#include <sstream>
+#include <cctype>
+#include <algorithm>
+#include <iomanip>
 
 #include <nlohmann/json.hpp>
 
@@ -21,11 +29,542 @@
 #include "HttpFileServer.hpp"
 
 using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 const string _WEBDASH_PROJECT_NAME_ = "webdash-server";
 
 static char pid_file_name[] = "/tmp/webdash-server.lock";
 static int pid_fd = -1;
+
+static std::optional<std::string> profile_get_string(const std::string& key) {
+    const auto& profile_entries = WebDashCore::Get().GetKeyValuesFromRootProfile();
+    for (const auto& entry : profile_entries) {
+        if (WebDashUtils::GetWebDashJsonKey(entry) == key) {
+            return entry.GetValue();
+        }
+    }
+    return std::nullopt;
+}
+
+static bool is_under_root_dir(const fs::path& p, const fs::path& root) {
+    try {
+        auto pc = fs::weakly_canonical(p);
+        auto rc = fs::weakly_canonical(root);
+        auto rel = fs::relative(pc, rc);
+        return !rel.empty() && *rel.begin() != "..";
+    } catch (...) {
+        return false;
+    }
+}
+
+static std::string shell_escape_double_quotes(const std::string& s) {
+    // For embedding inside a double-quoted shell string.
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if (c == '"' || c == '\\') out.push_back('\\');
+        out.push_back(c);
+    }
+    return out;
+}
+
+static std::string shell_escape_single_quotes(const std::string& s) {
+    // Safe to embed inside single quotes in a shell command.
+    // ' becomes: '"'"'
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        if (c == '\'') {
+            out += "'\"'\"'";
+        } else {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+static std::string to_lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+static bool ends_with_ci(const std::string& s, const std::string& suffix) {
+    if (s.size() < suffix.size()) return false;
+    return to_lower(s.substr(s.size() - suffix.size())) == to_lower(suffix);
+}
+
+static std::string first_token(const std::string& cmd);
+
+static std::string after_first_token(const std::string& cmd) {
+    size_t i = 0;
+    while (i < cmd.size() && std::isspace(static_cast<unsigned char>(cmd[i]))) i++;
+    while (i < cmd.size() && !std::isspace(static_cast<unsigned char>(cmd[i]))) i++;
+    while (i < cmd.size() && std::isspace(static_cast<unsigned char>(cmd[i]))) i++;
+    return cmd.substr(i);
+}
+
+static bool looks_like_vscode_cmd(const std::string& editor_cmd) {
+    const std::string bin = first_token(editor_cmd);
+    const std::string bin_lc = to_lower(bin);
+    return (bin_lc == "code") || ends_with_ci(bin, "code.exe") || (bin_lc.find("vscode") != std::string::npos);
+}
+
+static std::string first_token(const std::string& cmd) {
+    // Minimal tokenization: first non-space chunk.
+    // Good enough for typical editor commands like "code" or "/usr/bin/code --reuse-window".
+    size_t i = 0;
+    while (i < cmd.size() && std::isspace(static_cast<unsigned char>(cmd[i]))) i++;
+    size_t j = i;
+    while (j < cmd.size() && !std::isspace(static_cast<unsigned char>(cmd[j]))) j++;
+    return cmd.substr(i, j - i);
+}
+
+static std::optional<std::string> find_vscode_remote_cli_code_in_home(const std::string& home_path) {
+    // VS Code Server installs a WSL-side CLI at:
+    //   <home>/.vscode-server/bin/<commit>/bin/remote-cli/code
+    // Prefer the newest commit directory.
+    std::error_code ec;
+    fs::path base = fs::path(home_path) / ".vscode-server" / "bin";
+    if (!fs::exists(base, ec) || !fs::is_directory(base, ec)) {
+        return std::nullopt;
+    }
+
+    fs::file_time_type best_time{};
+    fs::path best_path;
+    bool have_best = false;
+    for (const auto& entry : fs::directory_iterator(base, ec)) {
+        if (ec) break;
+        if (!entry.is_directory(ec)) continue;
+        fs::path candidate = entry.path() / "bin" / "remote-cli" / "code";
+        if (!fs::exists(candidate, ec)) continue;
+        auto t = fs::last_write_time(entry.path(), ec);
+        if (ec) continue;
+        if (!have_best || t > best_time) {
+            best_time = t;
+            best_path = candidate;
+            have_best = true;
+        }
+    }
+    if (!have_best) return std::nullopt;
+    return best_path.string();
+}
+
+static std::optional<std::string> uid_to_username(uid_t uid) {
+    struct passwd* pw = getpwuid(uid);
+    if (!pw || !pw->pw_name) return std::nullopt;
+    return std::string(pw->pw_name);
+}
+
+static std::optional<std::string> uid_to_home(uid_t uid) {
+    struct passwd* pw = getpwuid(uid);
+    if (!pw || !pw->pw_dir) return std::nullopt;
+    return std::string(pw->pw_dir);
+}
+
+static int run_bash_lc_script_as_user(const std::string& script, const std::optional<std::string>& username) {
+    // Run: bash -lc <script>
+    // If username is set AND we are root, drop privileges to that user.
+    pid_t pid = ::fork();
+    if (pid < 0) {
+        return -1;
+    }
+
+    if (pid == 0) {
+        if (username.has_value() && ::geteuid() == 0) {
+            struct passwd* pw = ::getpwnam(username->c_str());
+            if (!pw) {
+                _exit(127);
+            }
+
+            // Set group privileges first.
+            (void)::initgroups(pw->pw_name, pw->pw_gid);
+            (void)::setgid(pw->pw_gid);
+            (void)::setuid(pw->pw_uid);
+
+            if (pw->pw_dir) {
+                ::setenv("HOME", pw->pw_dir, 1);
+                (void)::chdir(pw->pw_dir);
+            }
+            ::setenv("USER", pw->pw_name, 1);
+            ::setenv("LOGNAME", pw->pw_name, 1);
+        }
+
+        ::execl("/bin/bash", "bash", "-lc", script.c_str(), (char*)nullptr);
+        _exit(127);
+    }
+
+    int status = 0;
+    if (::waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return status;
+}
+
+struct ScriptRunResult {
+    int status = -1;
+    std::string output;
+};
+
+static ScriptRunResult run_bash_lc_script_as_user_capture(const std::string& script, const std::optional<std::string>& username, size_t max_output_bytes = 64 * 1024) {
+    // Run: bash -lc <script>
+    // If username is set AND we are root, drop privileges to that user.
+    // Capture combined stdout/stderr up to max_output_bytes.
+    int pipefd[2];
+    if (::pipe(pipefd) != 0) {
+        return { -1, "" };
+    }
+
+    pid_t pid = ::fork();
+    if (pid < 0) {
+        ::close(pipefd[0]);
+        ::close(pipefd[1]);
+        return { -1, "" };
+    }
+
+    if (pid == 0) {
+        // child
+        (void)::dup2(pipefd[1], STDOUT_FILENO);
+        (void)::dup2(pipefd[1], STDERR_FILENO);
+        ::close(pipefd[0]);
+        ::close(pipefd[1]);
+
+        if (username.has_value() && ::geteuid() == 0) {
+            struct passwd* pw = ::getpwnam(username->c_str());
+            if (!pw) {
+                _exit(127);
+            }
+
+            (void)::initgroups(pw->pw_name, pw->pw_gid);
+            (void)::setgid(pw->pw_gid);
+            (void)::setuid(pw->pw_uid);
+
+            if (pw->pw_dir) {
+                ::setenv("HOME", pw->pw_dir, 1);
+                (void)::chdir(pw->pw_dir);
+            }
+            ::setenv("USER", pw->pw_name, 1);
+            ::setenv("LOGNAME", pw->pw_name, 1);
+        }
+
+        ::execl("/bin/bash", "bash", "-lc", script.c_str(), (char*)nullptr);
+        _exit(127);
+    }
+
+    // parent
+    ::close(pipefd[1]);
+
+    std::string out;
+    out.reserve(std::min<size_t>(max_output_bytes, 4096));
+    std::array<char, 4096> buf{};
+    while (out.size() < max_output_bytes) {
+        const ssize_t n = ::read(pipefd[0], buf.data(), std::min<size_t>(buf.size(), max_output_bytes - out.size()));
+        if (n <= 0) break;
+        out.append(buf.data(), static_cast<size_t>(n));
+    }
+    ::close(pipefd[0]);
+
+    int status = 0;
+    if (::waitpid(pid, &status, 0) < 0) {
+        return { -1, out };
+    }
+    return { status, out };
+}
+
+static std::string url_decode(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+        if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+        return -1;
+    };
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size()) {
+            int hi = hex(s[i + 1]);
+            int lo = hex(s[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out += static_cast<char>(hi * 16 + lo);
+                i += 2;
+                continue;
+            }
+        }
+        if (s[i] == '+') {
+            out += ' ';
+            continue;
+        }
+        out += s[i];
+    }
+    return out;
+}
+
+// Returns:
+//   nullopt => launched
+//   "no-editor" => no configured editor
+//   otherwise => error message
+static std::optional<std::string> open_dir_in_editor(
+    const fs::path& dir_path,
+    const std::optional<uid_t>& run_as_uid,
+    const std::optional<std::string>& run_as_home
+) {
+    const std::string key_editor_base = std::string(WebDashConst::Internal::kJsonKeyPrefix) + ".code.editor";
+    const std::string key_editor_name = key_editor_base + ".name";
+    const std::string key_editor_user = key_editor_base + ".user";
+    const std::string key_host        = key_editor_base + ".host";
+    const std::string key_distro      = key_editor_base + ".distro";
+    const std::string key_debug       = key_editor_base + ".debug";
+    const std::string key_source_env  = std::string(WebDashConst::Internal::kJsonKeyPrefix) + ".source-environment-file";
+
+    // Support both:
+    //  - "code": { "editor": "code --reuse-window" }
+    //  - "code": { "editor": { "name": "code", "host": "wsl" } }
+    auto editor_opt = profile_get_string(key_editor_name);
+    if (!editor_opt || editor_opt->empty()) {
+        editor_opt = profile_get_string(key_editor_base);
+    }
+    if (!editor_opt || editor_opt->empty()) {
+        return std::string("no-editor");
+    }
+
+    const std::string host = profile_get_string(key_host).value_or("");
+    const std::string distro = profile_get_string(key_distro).value_or("");
+
+    auto truthy = [](const std::string& s) {
+        const std::string v = to_lower(s);
+        return (v == "1" || v == "true" || v == "yes" || v == "on" || v == "y");
+    };
+    const bool editor_debug = ([](const std::string& key_debug, const auto& truthy_fn) {
+        if (const char* env = std::getenv("WEBDASH_EDITOR_DEBUG")) {
+            if (truthy_fn(env)) return true;
+        }
+        if (auto v = profile_get_string(key_debug); v.has_value()) {
+            return truthy_fn(*v);
+        }
+        return false;
+    })(key_debug, truthy);
+
+    std::string source_env;
+    if (auto src = profile_get_string(key_source_env); src && !src->empty()) {
+        // Only use it if it exists; otherwise silently ignore.
+        std::error_code ec;
+        if (fs::exists(*src, ec)) {
+            source_env = *src;
+        }
+    }
+
+    const std::string editor_cmd = *editor_opt;
+
+    // Choose which user context to use for launching.
+    // webdash-server runs as root; we want the same behavior as `code .` in the user's WSL shell.
+    std::optional<std::string> username;
+    std::string home_path;
+    if (auto u = profile_get_string(key_editor_user); u && !u->empty()) {
+        // Explicit override: use this user for editor launches.
+        username = *u;
+        struct passwd* pw = getpwnam(username->c_str());
+        if (pw && pw->pw_dir) {
+            home_path = pw->pw_dir;
+        }
+    } else if (run_as_uid.has_value()) {
+        username = uid_to_username(*run_as_uid);
+        if (run_as_home.has_value()) home_path = *run_as_home;
+        if (home_path.empty()) {
+            if (auto h = uid_to_home(*run_as_uid); h.has_value()) home_path = *h;
+        }
+    }
+    if (home_path.empty()) {
+        if (const char* env_home = std::getenv("HOME")) home_path = env_home;
+    }
+
+    // If the user wants a WSL-context open, prefer the WSL-side VS Code remote CLI.
+    // This mirrors `code .` inside WSL and avoids accidentally calling /mnt/c/.../code.
+    std::string editor_call = editor_cmd;
+    std::string explicit_bin_path;
+    if (host == "wsl" && looks_like_vscode_cmd(editor_cmd) && !home_path.empty()) {
+        const std::string rest = after_first_token(editor_cmd);
+        auto remote_cli = find_vscode_remote_cli_code_in_home(home_path);
+        if (remote_cli.has_value()) {
+            explicit_bin_path = *remote_cli;
+            editor_call = "\"" + shell_escape_double_quotes(*remote_cli) + "\"";
+            if (!rest.empty()) editor_call += " " + rest;
+        }
+    }
+
+    // Make VS Code open a NEW window (avoid reusing an existing window/folder).
+    if (host == "wsl" && looks_like_vscode_cmd(editor_cmd)) {
+        if (editor_call.find("--new-window") == std::string::npos && editor_call.find(" -n") == std::string::npos) {
+            editor_call += " --new-window";
+        }
+    }
+
+    // Validate editor availability (using user shell if possible).
+    {
+        std::string check_script;
+        std::string missing_msg;
+        if (!explicit_bin_path.empty()) {
+            const std::string p = shell_escape_single_quotes(explicit_bin_path);
+            check_script = "test -x '\''" + p + "'\''";
+            missing_msg = std::string("VS Code remote CLI not executable: ") + explicit_bin_path;
+        } else {
+            const std::string bin = first_token(editor_call);
+            if (bin.empty()) return std::string("no-editor");
+            const std::string b = shell_escape_single_quotes(bin);
+            check_script = "command -v '\''" + b + "'\'' >/dev/null 2>&1";
+            missing_msg = std::string("editor not found: ") + bin;
+        }
+
+        if (!source_env.empty()) {
+            const std::string src = shell_escape_single_quotes(source_env);
+            check_script = "source '\''" + src + "'\'' >/dev/null 2>&1; " + check_script;
+        }
+
+        // Run check as the target user so PATH/HOME match.
+        const int st = run_bash_lc_script_as_user(check_script, username);
+        if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
+            if (!source_env.empty()) {
+                return missing_msg + " (even after sourcing " + source_env + ")";
+            }
+            return missing_msg + " (not found/executable)";
+        }
+    }
+
+    const std::string dir = shell_escape_double_quotes(dir_path.string());
+    const std::string dir_sq = shell_escape_single_quotes(dir_path.string());
+
+    std::string script;
+
+    const bool is_vscode = looks_like_vscode_cmd(editor_cmd);
+    if (is_vscode && editor_debug) {
+        const std::string prof_user = profile_get_string(key_editor_user).value_or("");
+        const std::string prof_distro = profile_get_string(key_distro).value_or("");
+        const std::string target_user = username.value_or("");
+        const std::string target_home = home_path;
+        script += "echo \"[webdash] profile code.editor.user=" + shell_escape_double_quotes(prof_user) + "\"; ";
+        script += "echo \"[webdash] profile code.editor.distro=" + shell_escape_double_quotes(prof_distro) + "\"; ";
+        script += "echo \"[webdash] resolved target user=" + shell_escape_double_quotes(target_user) + "\"; ";
+        script += "echo \"[webdash] resolved home=" + shell_escape_double_quotes(target_home) + "\"; ";
+        script += "echo \"[webdash] editor_call=" + shell_escape_double_quotes(editor_call) + "\"; ";
+        if (!explicit_bin_path.empty()) {
+            script += "echo \"[webdash] explicit_bin_path=" + shell_escape_double_quotes(explicit_bin_path) + "\"; ";
+        }
+    }
+
+    // WSL services started via systemd often don't have the interop env that interactive shells have.
+    // Without WSL_INTEROP, VS Code's WSL-side CLI may not be able to talk back to the Windows-side UI.
+    if (host == "wsl" && is_vscode) {
+        if (!distro.empty()) {
+            const std::string d = shell_escape_single_quotes(distro);
+            script += "export WSL_DISTRO_NAME='\\''" + d + "\\''; ";
+        }
+        script += "if [ -z \"$WSL2_GUI_APPS_ENABLED\" ]; then export WSL2_GUI_APPS_ENABLED=1; fi; ";
+    }
+
+    if (!source_env.empty()) {
+        const std::string src = shell_escape_single_quotes(source_env);
+        script += "source '\''" + src + "'\'' >/dev/null 2>&1; ";
+    }
+    // For VS Code: run with a short timeout so the API stays responsive.
+    // For other editors: background to avoid blocking the server.
+    if (is_vscode) {
+        // Capture output (for error reporting and to detect known "silent no-op" cases).
+        // Prefer Windows-side `code --remote wsl+<distro>` (when host==wsl) to avoid WSL remote-cli no-ops.
+        script += "set +e; out=''; rc=0; ";
+
+        if (host == "wsl" && !distro.empty()) {
+            script += "if [ -x /mnt/c/Windows/System32/cmd.exe ] && /mnt/c/Windows/System32/cmd.exe /c where code >/dev/null 2>&1; then ";
+            const std::string d = shell_escape_single_quotes(distro);
+            script += "out=$({ timeout 6s /mnt/c/Windows/System32/cmd.exe /c code --remote wsl+" + d + " --new-window '" + dir_sq + "'; } 2>&1); rc=$?; ";
+            script += "else ";
+        }
+
+        if (host == "wsl") {
+            // Only require WSL_INTEROP if we fall back to the WSL-side remote CLI.
+            // /run/WSL/1_interop is a symlink on some systems; -S will fail on the symlink itself.
+            script += "if [ -z \"$WSL_INTEROP\" ] || [ ! -S \"$WSL_INTEROP\" ]; then "
+                      "cand=; "
+                      "if [ -e /run/WSL/1_interop ]; then cand=$(readlink -f /run/WSL/1_interop 2>/dev/null || true); fi; "
+                      "if [ -n \"$cand\" ] && [ -S \"$cand\" ]; then WSL_INTEROP=$cand; fi; "
+                      "if [ -z \"$WSL_INTEROP\" ] || [ ! -S \"$WSL_INTEROP\" ]; then "
+                      "for s in /run/WSL/*_interop; do if [ -S \"$s\" ]; then WSL_INTEROP=$s; break; fi; done; "
+                      "fi; "
+                      "export WSL_INTEROP; "
+                      "fi; ";
+            script += "if [ -z \"$WSL_INTEROP\" ] || [ ! -S \"$WSL_INTEROP\" ]; then echo 'WSL_INTEROP is not set to a socket (need a valid /run/WSL/*_interop)'; exit 78; fi; ";
+        }
+
+        script += "out=$({ timeout 6s " + editor_call + " \"" + dir + "\"; } 2>&1); rc=$?; ";
+
+        if (host == "wsl" && !distro.empty()) {
+            script += "fi; ";
+        }
+
+        script += "if [ -n \"$out\" ]; then echo \"$out\"; fi; exit $rc";
+    } else {
+        script += "nohup " + editor_call + " \"" + dir + "\" >/dev/null 2>&1 &";
+    }
+
+    ScriptRunResult r;
+    if (is_vscode) {
+        r = run_bash_lc_script_as_user_capture(script, username);
+    } else {
+        r.status = run_bash_lc_script_as_user(script, username);
+        r.output.clear();
+    }
+
+    auto looks_like_vscode_noop = [](const std::string& s) {
+        const std::string sl = to_lower(s);
+        return sl.find("command is only available in wsl") != std::string::npos;
+    };
+
+    auto looks_like_windows_code_missing = [](const std::string& s) {
+        const std::string sl = to_lower(s);
+        return sl.find("is not recognized as an internal or external command") != std::string::npos;
+    };
+
+    std::string captured_out = r.output;
+    if (!((WIFEXITED(r.status) && WEXITSTATUS(r.status) == 0)) || (is_vscode && (looks_like_vscode_noop(captured_out) || looks_like_windows_code_missing(captured_out)))) {
+        int exit_code = -1;
+        if (WIFEXITED(r.status)) {
+            exit_code = WEXITSTATUS(r.status);
+        } else if (WIFSIGNALED(r.status)) {
+            // Encode signals as 128+signum (common convention)
+            exit_code = 128 + WTERMSIG(r.status);
+        }
+
+        std::string msg = "failed to launch editor";
+        if (editor_debug) {
+            if (exit_code >= 0) {
+                msg += " (exit=" + std::to_string(exit_code) + ", status=" + std::to_string(r.status) + ")";
+            } else {
+                msg += " (status=" + std::to_string(r.status) + ")";
+            }
+        }
+
+        // Surface helpful output, but keep it concise.
+        if (!captured_out.empty()) {
+            std::string out = captured_out;
+            if (out.size() > 2000) out.resize(2000);
+            while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+            if (!out.empty()) {
+                msg += ": ";
+                msg += out;
+            }
+        } else if (editor_debug) {
+            msg += ": (no output)";
+        }
+
+        // Make common failure modes clearer.
+        if (is_vscode && looks_like_windows_code_missing(captured_out)) {
+            msg += " (Windows 'code' command not found on PATH)";
+        }
+        if (is_vscode && looks_like_vscode_noop(captured_out)) {
+            msg += " (VS Code remote CLI no-op)";
+        }
+
+        return msg;
+    }
+    return std::nullopt;
+}
 
 // On how to use JSON:
 // https://github.com/nlohmann/json
@@ -329,8 +868,6 @@ int execute_main()
 
                 // Port-forward / IP state report (human-readable text)
                 if (url_path == "/_api/wsl-forwarded-ports-list") {
-                    namespace fs = std::filesystem;
-
                     fs::path script = fs::path(WebDashCore::Get().GetWebDashRootDirectory())
                                   / "src" / "bin" / "_webdash" / "port-forward" / "wsl-port-forward.py";
 
@@ -362,6 +899,138 @@ int execute_main()
                     out["text"] = text;
                     return out.dump();
                 }
+
+                // Click handler for Registered Projects:
+                // - If $.code.editor is set in webdash-profile.json => open project directory
+                // - Else => portal will open an editor dialog (returns action=edit)
+                // GET /_api/open-project?config=<absolute-path-to-webdash.config.json>
+                if (url_path.rfind("/_api/open-project", 0) == 0) {
+                    json resp;
+
+                    auto q = url_path.find('?');
+                    std::string cfg;
+                    if (q != std::string::npos) {
+                        std::string qs = url_path.substr(q + 1);
+                        size_t pos = 0;
+                        while (pos < qs.size()) {
+                            auto amp = qs.find('&', pos);
+                            auto seg = qs.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+                            auto eq  = seg.find('=');
+                            if (eq != std::string::npos) {
+                                auto k = seg.substr(0, eq);
+                                auto v = seg.substr(eq + 1);
+                                if (k == "config") cfg = url_decode(v);
+                            }
+                            if (amp == std::string::npos) break;
+                            pos = amp + 1;
+                        }
+                    }
+
+                    if (cfg.empty()) {
+                        resp["ok"] = false;
+                        resp["error"] = "missing config";
+                        return resp.dump();
+                    }
+
+                    auto reg = suite.GetRegisteredConfig(cfg);
+                    if (!reg.has_value()) {
+                        resp["ok"] = false;
+                        resp["error"] = "config not registered";
+                        return resp.dump();
+                    }
+
+                    fs::path cfg_path(cfg);
+                    fs::path dir = cfg_path.parent_path();
+
+                    // Prefer stored user context; if missing, infer from file ownership.
+                    std::optional<uid_t> uid = reg->run_as_uid;
+                    std::optional<std::string> home = reg->run_as_home;
+                    if (!uid.has_value()) {
+                        struct stat st;
+                        if (::stat(cfg.c_str(), &st) == 0) {
+                            uid = st.st_uid;
+                            if (!home.has_value()) {
+                                home = uid_to_home(st.st_uid);
+                            }
+                        }
+                    }
+
+                    auto err = open_dir_in_editor(dir, uid, home);
+
+                    if (!err.has_value()) {
+                        resp["ok"] = true;
+                        resp["action"] = "opened";
+                        return resp.dump();
+                    }
+                    if (*err == "no-editor") {
+                        resp["ok"] = true;
+                        resp["action"] = "edit";
+                        return resp.dump();
+                    }
+                    // If launching the editor fails, fall back to portal editing rather than doing nothing.
+                    resp["ok"] = true;
+                    resp["action"] = "edit";
+                    resp["warning"] = *err;
+                    return resp.dump();
+                }
+
+                // Read current config contents for portal editing.
+                // GET /_api/read-config?config=<absolute-path-to-webdash.config.json>
+                if (url_path.rfind("/_api/read-config", 0) == 0) {
+                    json resp;
+
+                    auto q = url_path.find('?');
+                    std::string cfg;
+                    if (q != std::string::npos) {
+                        std::string qs = url_path.substr(q + 1);
+                        size_t pos = 0;
+                        while (pos < qs.size()) {
+                            auto amp = qs.find('&', pos);
+                            auto seg = qs.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+                            auto eq  = seg.find('=');
+                            if (eq != std::string::npos) {
+                                auto k = seg.substr(0, eq);
+                                auto v = seg.substr(eq + 1);
+                                if (k == "config") cfg = url_decode(v);
+                            }
+                            if (amp == std::string::npos) break;
+                            pos = amp + 1;
+                        }
+                    }
+
+                    if (cfg.empty()) {
+                        resp["ok"] = false;
+                        resp["error"] = "missing config";
+                        return resp.dump();
+                    }
+
+                    auto reg = suite.GetRegisteredConfig(cfg);
+                    if (!reg.has_value()) {
+                        resp["ok"] = false;
+                        resp["error"] = "config not registered";
+                        return resp.dump();
+                    }
+
+                    fs::path cfg_path(cfg);
+                    fs::path root = WebDashCore::Get().GetWebDashRootDirectory();
+                    if (!is_under_root_dir(cfg_path, root)) {
+                        resp["ok"] = false;
+                        resp["error"] = "config not under webdash root";
+                        return resp.dump();
+                    }
+
+                    std::ifstream in(cfg, std::ios::in);
+                    if (!in.is_open()) {
+                        resp["ok"] = false;
+                        resp["error"] = "failed to open config";
+                        return resp.dump();
+                    }
+                    std::stringstream ss;
+                    ss << in.rdbuf();
+                    resp["ok"] = true;
+                    resp["content"] = ss.str();
+                    return resp.dump();
+                }
                 // /_api/run-task?config=<path>&task=<name>
                 if (url_path.rfind("/_api/run-task", 0) == 0) {
                     // Parse query string
@@ -370,25 +1039,6 @@ int execute_main()
                     if (q != std::string::npos) {
                         std::string qs = url_path.substr(q + 1);
                         // simple key=value&key=value parser
-                        auto decode = [](const std::string& s) {
-                            std::string out; out.reserve(s.size());
-                            for (size_t i = 0; i < s.size(); ++i) {
-                                if (s[i] == '%' && i + 2 < s.size()) {
-                                    int hi = 0, lo = 0;
-                                    auto hex = [](char c) -> int {
-                                        if (c >= '0' && c <= '9') return c - '0';
-                                        if (c >= 'a' && c <= 'f') return 10 + c - 'a';
-                                        if (c >= 'A' && c <= 'F') return 10 + c - 'A';
-                                        return -1;
-                                    };
-                                    hi = hex(s[i+1]); lo = hex(s[i+2]);
-                                    if (hi >= 0 && lo >= 0) { out += (char)(hi * 16 + lo); i += 2; continue; }
-                                }
-                                if (s[i] == '+') { out += ' '; continue; }
-                                out += s[i];
-                            }
-                            return out;
-                        };
                         size_t pos = 0;
                         while (pos < qs.size()) {
                             auto amp = qs.find('&', pos);
@@ -396,7 +1046,7 @@ int execute_main()
                             auto eq  = seg.find('=');
                             if (eq != std::string::npos) {
                                 auto k = seg.substr(0, eq);
-                                auto v = decode(seg.substr(eq + 1));
+                                auto v = url_decode(seg.substr(eq + 1));
                                 if (k == "config") cfg  = v;
                                 if (k == "task")   task = v;
                             }
@@ -649,6 +1299,86 @@ int execute_main()
             }
 
             reply(out);
+        });
+
+    // ── WRITE_CONFIG ───────────────────────────────────────────────────
+    // Writes a registered webdash.config.json.
+    // Payload JSON: {"config":"/abs/path/webdash.config.json", "content":"..."}
+    websocket::dispatcher.On(IpcCommand::WRITE_CONFIG,
+        [&suite](const IpcMsgParser::Parsed& msg, IpcDispatcher::IpcResponder reply) {
+            json resp;
+            try {
+                json payload = json::parse(msg.payload);
+                std::string cfg = payload.value("config", "");
+                std::string content = payload.value("content", "");
+
+                if (cfg.empty()) {
+                    resp["ok"] = false;
+                    resp["error"] = "missing config";
+                    reply(resp.dump());
+                    return;
+                }
+
+                auto reg = suite.GetRegisteredConfig(cfg);
+                if (!reg.has_value()) {
+                    resp["ok"] = false;
+                    resp["error"] = "config not registered";
+                    reply(resp.dump());
+                    return;
+                }
+
+                fs::path cfg_path(cfg);
+                fs::path root = WebDashCore::Get().GetWebDashRootDirectory();
+                if (!is_under_root_dir(cfg_path, root)) {
+                    resp["ok"] = false;
+                    resp["error"] = "config not under webdash root";
+                    reply(resp.dump());
+                    return;
+                }
+
+                if (cfg_path.filename() != WebDashCore::GetProjectConfigFilename()) {
+                    resp["ok"] = false;
+                    resp["error"] = "only webdash.config.json is writable";
+                    reply(resp.dump());
+                    return;
+                }
+
+                fs::path tmp = cfg_path;
+                tmp += ".tmp." + std::to_string(::getpid());
+
+                std::error_code ec;
+                auto perms = fs::exists(cfg_path, ec)
+                    ? fs::status(cfg_path, ec).permissions()
+                    : (fs::perms::owner_read | fs::perms::owner_write);
+
+                {
+                    std::ofstream out(tmp, std::ios::out | std::ios::trunc);
+                    if (!out.is_open()) {
+                        resp["ok"] = false;
+                        resp["error"] = "failed to open temp file";
+                        reply(resp.dump());
+                        return;
+                    }
+                    out << content;
+                }
+
+                fs::permissions(tmp, perms, ec);
+                fs::rename(tmp, cfg_path, ec);
+                if (ec) {
+                    fs::remove(tmp, ec);
+                    resp["ok"] = false;
+                    resp["error"] = std::string("rename failed: ") + ec.message();
+                    reply(resp.dump());
+                    return;
+                }
+
+                resp["ok"] = true;
+                reply(resp.dump());
+            } catch (const std::exception& e) {
+                resp["ok"] = false;
+                resp["error"] = std::string("parse error: ") + e.what();
+                reply(resp.dump());
+            }
         });
 
     // ── Wire up Suite change notifications to broadcast to all WebSocket clients ──

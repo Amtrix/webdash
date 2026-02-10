@@ -4,6 +4,14 @@
     "project-location": "$.rootDir()/src/bin/_webdash/port-forward",
     "commands": [
         {
+            "name": "iptables-ensure",
+            "description": "Re-apply WSL iptables allow rules for all configured forwarded ports (survives reboot via scheduler)",
+            "action": "python3 $.thisDir()/wsl-port-forward.py iptables-ensure",
+            "wdir": "$.thisDir()",
+            "silent": true,
+            "frequency": "15000"
+        },
+        {
             "name": "port-forward",
             "description": "Configure a port to be accessible from the local network",
             "action": "python3 $.thisDir()/wsl-port-forward.py forward $.args()",

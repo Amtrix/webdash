@@ -68,6 +68,24 @@ static std::optional<fs::file_time_type> try_last_write_time(const std::string& 
     }
 }
 
+static std::optional<std::string> try_read_project_name_from_config(const std::string& config_path) {
+    try {
+        std::ifstream in(config_path);
+        if (!in.is_open()) return std::nullopt;
+        json j;
+        in >> j;
+        if (!j.is_object()) return std::nullopt;
+        if (!j.contains("project-name")) return std::nullopt;
+        const auto& v = j["project-name"];
+        if (!v.is_string()) return std::nullopt;
+        auto s = v.get<std::string>();
+        if (s.empty()) return std::nullopt;
+        return s;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
 Suite::Suite() {
     _is_alive = true;
 }
@@ -100,6 +118,7 @@ void Suite::LoadSaved() {
                 }
                 _scripts.emplace_back(WebDashConfig(path));
                 _scripts.back().last_write_time = try_last_write_time(path);
+                _scripts.back().project_name = try_read_project_name_from_config(path);
             } else if (it.is_object()) {
                 const string path = it["path"].get<std::string>();
                 ifstream configStream;
@@ -114,6 +133,7 @@ void Suite::LoadSaved() {
                 WebDashConfig cfg{path};
                 RegisteredConfig rc{cfg};
                 rc.last_write_time = try_last_write_time(path);
+                rc.project_name = try_read_project_name_from_config(path);
                 if (it.contains("uid")) {
                     rc.run_as_uid = it["uid"].get<uid_t>();
                 }
@@ -143,6 +163,7 @@ void Suite::RegisterConfig(const WebDashConfig& config) {
         std::unique_lock<std::shared_mutex> lock(_suite_mutex);
         _scripts.emplace_back(config);
         _scripts.back().last_write_time = try_last_write_time(config.GetPath());
+        _scripts.back().project_name = try_read_project_name_from_config(config.GetPath());
         SerializeAndSave();
     }
 
@@ -173,6 +194,7 @@ void Suite::RegisterConfig(const WebDashConfig& config, uid_t uid, gid_t gid, co
         std::unique_lock<std::shared_mutex> lock(_suite_mutex);
         _scripts.emplace_back(config, uid, gid, home);
         _scripts.back().last_write_time = try_last_write_time(config.GetPath());
+        _scripts.back().project_name = try_read_project_name_from_config(config.GetPath());
         SerializeAndSave();
     }
 
@@ -213,6 +235,7 @@ void Suite::ReloadAll() {
         for (auto& it : _scripts) {
             it.config.Reload();
             it.last_write_time = try_last_write_time(it.config.GetPath());
+            it.project_name = try_read_project_name_from_config(it.config.GetPath());
         }
     }
 
@@ -266,6 +289,7 @@ void Suite::RunOnce() {
                 if (!entry.last_write_time.has_value() || *current_mtime != *entry.last_write_time) {
                     entry.config.Reload();
                     entry.last_write_time = current_mtime;
+                    entry.project_name = try_read_project_name_from_config(entry.config.GetPath());
                 }
             }
         }
@@ -317,7 +341,7 @@ void Suite::SerializeAndSave() {
 
 string Suite::GetRegisteredConfigsJsonDump() {
     std::shared_lock<std::shared_mutex> lock(_suite_mutex);
-    json arr;
+    json arr = json::array();
 
     for (const auto& entry : _scripts) {
         json item;
@@ -327,6 +351,9 @@ string Suite::GetRegisteredConfigsJsonDump() {
             item["uid"] = entry.run_as_uid.value();
             item["gid"] = entry.run_as_gid.value_or(entry.run_as_uid.value());
             item["home"] = entry.run_as_home.value_or("");
+        }
+        if (entry.project_name.has_value()) {
+            item["projectName"] = entry.project_name.value();
         }
         arr.push_back(item);
     }

@@ -9,6 +9,7 @@
         :root {
             --bg: #0e1117;
             --surface: #161b22;
+            --panel: var(--surface);
             --border: #30363d;
             --text: #c9d1d9;
             --text-dim: #8b949e;
@@ -38,6 +39,16 @@
             display: flex;
             align-items: center;
             gap: 16px;
+        }
+
+        .tiny-alert {
+            color: var(--red);
+            font-size: 12px;
+            margin-left: 6px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 55vw;
         }
 
         header h1 {
@@ -125,6 +136,11 @@
             gap: 10px;
             font-size: 13px;
             font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            cursor: pointer;
+        }
+
+        .project-item:hover .project-path {
+            text-decoration: underline;
         }
 
         .project-item:last-child {
@@ -155,6 +171,117 @@
             color: var(--text-dim);
             font-size: 11px;
             flex-shrink: 0;
+        }
+
+        /* ─── Config editor modal ─── */
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-backdrop.open {
+            display: flex;
+        }
+
+        .modal-card {
+            width: min(900px, calc(100vw - 32px));
+            max-height: calc(100vh - 32px);
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .modal-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .modal-status.error {
+            color: var(--red);
+        }
+
+        .modal-subtitle {
+            font-size: 11px;
+            color: var(--text-dim);
+            padding: 0 16px 10px 16px;
+            border-bottom: 1px solid var(--border);
+            word-break: break-all;
+        }
+
+        .modal-body {
+            padding: 12px 16px;
+            overflow: auto;
+            flex: 1;
+        }
+
+        .modal-textarea {
+            width: 100%;
+            min-height: 420px;
+            resize: vertical;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            color: var(--text);
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 12px;
+            outline: none;
+        }
+
+        .modal-footer {
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .modal-status {
+            font-size: 11px;
+            color: var(--text-dim);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn {
+            border: 1px solid var(--border);
+            background: none;
+            color: var(--text);
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: default;
         }
 
         /* ─── Action log ─── */
@@ -380,6 +507,7 @@
         <h1>⚡ WebDash Portal</h1>
         <div class="status-dot" id="statusDot"></div>
         <span class="status-label" id="statusLabel">Connecting…</span>
+        <div class="tiny-alert" id="editorAlert" style="display:none"></div>
     </header>
 
     <div class="container">
@@ -435,6 +563,26 @@
         </div>
     </div>
 
+    <div class="modal-backdrop" id="configModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-title">Edit webdash.config.json</div>
+                <button class="btn" onclick="closeConfigModal()">Close</button>
+            </div>
+            <div class="modal-subtitle" id="configModalPath"></div>
+            <div class="modal-body">
+                <textarea class="modal-textarea" id="configModalText" spellcheck="false"></textarea>
+            </div>
+            <div class="modal-footer">
+                <div class="modal-status" id="configModalStatus"> </div>
+                <div class="modal-actions">
+                    <button class="btn" id="configModalSave" onclick="saveConfigModal()">Save</button>
+                    <button class="btn" onclick="closeConfigModal()">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         // ────────────────────────────────────────────────────────
         //  Dual-mode client: WebSocket (push) with HTTP polling fallback
@@ -451,6 +599,25 @@
         let callbackSeq = 0;
         let pendingCallbacks = {};
         let pollTimer = null;
+
+        let editorAlertTimer = null;
+
+        function showEditorAlert(msg) {
+            const el = document.getElementById('editorAlert');
+            if (!el) return;
+            if (!msg) {
+                el.textContent = '';
+                el.style.display = 'none';
+                return;
+            }
+            el.textContent = msg;
+            el.style.display = 'block';
+            if (editorAlertTimer) clearTimeout(editorAlertTimer);
+            editorAlertTimer = setTimeout(() => {
+                el.textContent = '';
+                el.style.display = 'none';
+            }, 10000);
+        }
 
         // Used to queue initial loads so opening the portal doesn't fan out a burst of requests.
         let loadQueue = Promise.resolve();
@@ -755,6 +922,14 @@
         //  Rendering
         // ────────────────────────────────────────────────────────
 
+        function escJs(s) {
+            return String(s)
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'")
+                .replace(/\r/g, '')
+                .replace(/\n/g, '\\n');
+        }
+
         function renderProjects(projects) {
             const el = document.getElementById('projectList');
             document.getElementById('projectCount').textContent = projects.length;
@@ -769,17 +944,126 @@
                 const relPath = (typeof p === 'object' && p.rel) ? p.rel : '';
                 // Show just the parent directory name
                 const parts = fullPath.replace(/\/webdash\.config\.json$/, '').split('/');
-                const path = parts[parts.length - 1] || fullPath;
+                const folderName = parts[parts.length - 1] || fullPath;
+                const projName = (typeof p === 'object' && p.projectName) ? String(p.projectName) : '';
+                const displayName = projName || folderName;
                 const user = (typeof p === 'object' && p.uid !== undefined)
                     ? `uid ${p.uid}` : '';
 
-                return `<div class="project-item">
+                return `<div class="project-item" onclick="projectClicked('${escJs(fullPath)}')">
                     <span class="project-icon"></span>
-                    <span class="project-path" title="${esc(fullPath)}">${esc(path)}</span>
+                    <span class="project-path" title="${esc(fullPath)}">${esc(displayName)}</span>
                     ${relPath ? `<span class="project-relpath" title="${esc(relPath)}">${esc(relPath)}</span>` : ''}
                     ${user ? `<span class="project-user">${esc(user)}</span>` : ''}
                 </div>`;
             }).join('');
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  Project click behavior
+        //  - If server has $.code.editor => open project directory
+        //  - Else => edit webdash.config.json in a modal
+        // ────────────────────────────────────────────────────────
+
+        let modalConfigPath = '';
+
+        function openConfigModal(path, content, warningMsg = '') {
+            modalConfigPath = path;
+            document.getElementById('configModalPath').textContent = path;
+            document.getElementById('configModalText').value = content || '';
+            const st = document.getElementById('configModalStatus');
+            st.classList.remove('error');
+            if (warningMsg) {
+                st.textContent = warningMsg;
+                st.classList.add('error');
+            } else {
+                st.textContent = ' ';
+            }
+            document.getElementById('configModalSave').disabled = false;
+            document.getElementById('configModal').classList.add('open');
+        }
+
+        function closeConfigModal() {
+            modalConfigPath = '';
+            document.getElementById('configModal').classList.remove('open');
+        }
+
+        async function projectClicked(configPath) {
+            try {
+                const resp = await fetch(apiUrl('open-project') + '?config=' + encodeURIComponent(configPath));
+                const j = await resp.json();
+                const editorMsg = (j && (j.warning || j.error)) ? String(j.warning || j.error) : '';
+                if (!j.ok) {
+                    // Fall back to portal editing so clicks always do something useful.
+                    if (j.error) showEditorAlert(String(j.error));
+                } else if (j.action === 'opened') {
+                    showEditorAlert('');
+                    return;
+                } else if (j.warning) {
+                    showEditorAlert(String(j.warning));
+                }
+
+                const r2 = await fetch(apiUrl('read-config') + '?config=' + encodeURIComponent(configPath));
+                const j2 = await r2.json();
+                if (!j2.ok) {
+                    if (j2.error) showEditorAlert(String(j2.error));
+                    return;
+                }
+                openConfigModal(configPath, j2.content, editorMsg);
+            } catch (e) {
+                showEditorAlert('Project click failed');
+            }
+        }
+
+        function ensureWsConnected(timeoutMs = 3000) {
+            return new Promise((resolve, reject) => {
+                if (ws && ws.readyState === WebSocket.OPEN) return resolve();
+
+                connectWs();
+                const start = Date.now();
+                const timer = setInterval(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        clearInterval(timer);
+                        resolve();
+                        return;
+                    }
+                    if (Date.now() - start > timeoutMs) {
+                        clearInterval(timer);
+                        reject(new Error('WebSocket unavailable'));
+                    }
+                }, 50);
+            });
+        }
+
+        async function saveConfigModal() {
+            const statusEl = document.getElementById('configModalStatus');
+            const saveBtn = document.getElementById('configModalSave');
+            const text = document.getElementById('configModalText').value;
+
+            if (!modalConfigPath) return;
+
+            saveBtn.disabled = true;
+            statusEl.classList.remove('error');
+            statusEl.textContent = 'Saving…';
+
+            try {
+                await ensureWsConnected(3000);
+                const payload = JSON.stringify({ config: modalConfigPath, content: text });
+                const raw = await ipcRequest('write-config', payload, 15000);
+                const j = JSON.parse(raw);
+                if (!j.ok) {
+                    statusEl.textContent = j.error || 'Save failed';
+                    statusEl.classList.add('error');
+                    saveBtn.disabled = false;
+                    return;
+                }
+                statusEl.textContent = 'Saved';
+                setTimeout(() => closeConfigModal(), 250);
+            } catch (e) {
+                statusEl.textContent = String(e && e.message ? e.message : e);
+                statusEl.classList.add('error');
+                saveBtn.disabled = false;
+            }
         }
 
         function renderActions(actions) {
