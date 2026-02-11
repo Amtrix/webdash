@@ -46,6 +46,35 @@ static std::optional<std::string> profile_get_string(const std::string& key) {
     return std::nullopt;
 }
 
+static std::vector<std::string> profile_get_string_list(const std::string& key_prefix) {
+    // Collects all values whose key starts with key_prefix + "." (flattened array entries).
+    // Array indices are stored as "[0]", "[1]", etc. by the profile parser.
+    // e.g. key_prefix = "$#.code.editor.terminals" matches "$#.code.editor.terminals.[0]", etc.
+    const std::string prefix = key_prefix + ".";
+    std::vector<std::pair<int, std::string>> indexed;
+    const auto& profile_entries = WebDashCore::Get().GetKeyValuesFromRootProfile();
+    for (const auto& entry : profile_entries) {
+        const std::string k = WebDashUtils::GetWebDashJsonKey(entry);
+        if (k.rfind(prefix, 0) == 0) {
+            const std::string suffix = k.substr(prefix.size());
+            // suffix looks like "[0]", "[1]", etc.
+            try {
+                std::string num = suffix;
+                if (num.size() >= 2 && num.front() == '[' && num.back() == ']') {
+                    num = num.substr(1, num.size() - 2);
+                }
+                int idx = std::stoi(num);
+                indexed.emplace_back(idx, entry.GetValue());
+            } catch (...) {}
+        }
+    }
+    std::sort(indexed.begin(), indexed.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::vector<std::string> result;
+    result.reserve(indexed.size());
+    for (auto& [_, v] : indexed) result.push_back(std::move(v));
+    return result;
+}
+
 static bool is_under_root_dir(const fs::path& p, const fs::path& root) {
     try {
         auto pc = fs::weakly_canonical(p);
@@ -566,6 +595,135 @@ static std::optional<std::string> open_dir_in_editor(
     return std::nullopt;
 }
 
+// ── Terminal launch ──────────────────────────────────────────────────────
+// Launches a terminal (wsl, powershell, cmd) with cwd set to `dir_path`.
+// Returns nullopt on success or an error string.
+static std::optional<std::string> open_terminal(
+    const std::string& terminal_type,
+    const fs::path& dir_path,
+    const std::optional<uid_t>& run_as_uid,
+    const std::optional<std::string>& run_as_home
+) {
+    const std::string key_editor_base = std::string(WebDashConst::Internal::kJsonKeyPrefix) + ".code.editor";
+    const std::string key_editor_user = key_editor_base + ".user";
+    const std::string key_distro      = key_editor_base + ".distro";
+    const std::string key_host        = key_editor_base + ".host";
+    const std::string key_source_env  = std::string(WebDashConst::Internal::kJsonKeyPrefix) + ".source-environment-file";
+
+    const std::string host   = profile_get_string(key_host).value_or("");
+    const std::string distro = profile_get_string(key_distro).value_or("");
+
+    std::string source_env;
+    if (auto src = profile_get_string(key_source_env); src && !src->empty()) {
+        std::error_code ec;
+        if (fs::exists(*src, ec)) {
+            source_env = *src;
+        }
+    }
+
+    // Resolve user context.
+    std::optional<std::string> username;
+    std::string home_path;
+    if (auto u = profile_get_string(key_editor_user); u && !u->empty()) {
+        username = *u;
+        struct passwd* pw = getpwnam(username->c_str());
+        if (pw && pw->pw_dir) home_path = pw->pw_dir;
+    } else if (run_as_uid.has_value()) {
+        username = uid_to_username(*run_as_uid);
+        if (run_as_home.has_value()) home_path = *run_as_home;
+        if (home_path.empty()) {
+            if (auto h = uid_to_home(*run_as_uid); h.has_value()) home_path = *h;
+        }
+    }
+    if (home_path.empty()) {
+        if (const char* env_home = std::getenv("HOME")) home_path = env_home;
+    }
+
+    const std::string dir_escaped_dq = shell_escape_double_quotes(dir_path.string());
+    const std::string dir_escaped_sq = shell_escape_single_quotes(dir_path.string());
+
+    const std::string type_lc = to_lower(terminal_type);
+
+    std::string script;
+
+    if (type_lc == "wsl") {
+        // Open a WSL shell (via Windows Terminal or wsl.exe) in the project directory.
+        if (host == "wsl") {
+            if (!distro.empty()) {
+                const std::string d = shell_escape_single_quotes(distro);
+                script += "export WSL_DISTRO_NAME='" + d + "'; ";
+            }
+            script += "if [ -z \"$WSL2_GUI_APPS_ENABLED\" ]; then export WSL2_GUI_APPS_ENABLED=1; fi; ";
+        }
+
+        if (!source_env.empty()) {
+            const std::string src = shell_escape_single_quotes(source_env);
+            script += "source '" + src + "' >/dev/null 2>&1; ";
+        }
+
+        // WSL_INTEROP recovery.
+        if (host == "wsl") {
+            script += "if [ -z \"$WSL_INTEROP\" ] || [ ! -S \"$WSL_INTEROP\" ]; then "
+                      "cand=; "
+                      "if [ -e /run/WSL/1_interop ]; then cand=$(readlink -f /run/WSL/1_interop 2>/dev/null || true); fi; "
+                      "if [ -n \"$cand\" ] && [ -S \"$cand\" ]; then WSL_INTEROP=$cand; fi; "
+                      "if [ -z \"$WSL_INTEROP\" ] || [ ! -S \"$WSL_INTEROP\" ]; then "
+                      "for s in /run/WSL/*_interop; do if [ -S \"$s\" ]; then WSL_INTEROP=$s; break; fi; done; "
+                      "fi; "
+                      "export WSL_INTEROP; "
+                      "fi; ";
+            script += "if [ -z \"$WSL_INTEROP\" ] || [ ! -S \"$WSL_INTEROP\" ]; then echo 'WSL_INTEROP is not set to a socket'; exit 78; fi; ";
+        }
+
+        // Launch a WSL shell in Windows Terminal (wt.exe) if available, else fall back to wsl.exe.
+        // Convert the WSL path to a Windows path so wt.exe/wsl.exe can understand it.
+        script += "set +e; ";
+        script += "windir=$(wslpath -w '" + dir_escaped_sq + "' 2>/dev/null); ";
+        script += "if [ -z \"$windir\" ]; then echo 'Failed to convert path to Windows format'; exit 1; fi; ";
+        if (!distro.empty()) {
+            const std::string d = shell_escape_single_quotes(distro);
+            // Try wt.exe first (opens a nice tabbed terminal).
+            script += "if /mnt/c/Windows/System32/cmd.exe /c where wt >nul 2>&1; then ";
+            script += "nohup /mnt/c/Windows/System32/cmd.exe /c start wt.exe -p \"" + shell_escape_double_quotes(distro) + "\" -d \"$windir\" >/dev/null 2>&1 & ";
+            script += "else ";
+            script += "nohup /mnt/c/Windows/System32/cmd.exe /c start wsl.exe -d " + d + " --cd \"$windir\" >/dev/null 2>&1 & ";
+            script += "fi";
+        } else {
+            script += "nohup /mnt/c/Windows/System32/cmd.exe /c start wsl.exe --cd \"$windir\" >/dev/null 2>&1 &";
+        }
+
+    } else if (type_lc == "powershell") {
+        // Launch PowerShell on Windows side, cd to the project directory.
+        // Convert WSL path to Windows path.
+        script += "set +e; ";
+        script += "windir=$(wslpath -w '" + dir_escaped_sq + "' 2>/dev/null); ";
+        script += "if [ -z \"$windir\" ]; then echo 'Failed to convert path to Windows format'; exit 1; fi; ";
+        script += "nohup /mnt/c/Windows/System32/cmd.exe /c start powershell.exe -NoExit -Command \"cd '$windir'\" >/dev/null 2>&1 &";
+
+    } else {
+        return std::string("unsupported terminal type: ") + terminal_type;
+    }
+
+    ScriptRunResult r;
+    r = run_bash_lc_script_as_user_capture(script, username);
+
+    if (WIFEXITED(r.status) && WEXITSTATUS(r.status) == 0) {
+        return std::nullopt;
+    }
+
+    std::string msg = "failed to launch " + type_lc + " terminal";
+    if (!r.output.empty()) {
+        std::string out = r.output;
+        if (out.size() > 2000) out.resize(2000);
+        while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+        if (!out.empty()) {
+            msg += ": ";
+            msg += out;
+        }
+    }
+    return msg;
+}
+
 // On how to use JSON:
 // https://github.com/nlohmann/json
 
@@ -1066,6 +1224,80 @@ int execute_main()
                     }
                     return resp.dump();
                 }
+
+                // Returns the configured terminals list from code.editor.terminals.
+                // GET /_api/editor-config
+                if (url_path == "/_api/editor-config") {
+                    json resp;
+                    const std::string key_terminals = std::string(WebDashConst::Internal::kJsonKeyPrefix) + ".code.editor.terminals";
+                    auto terminals = profile_get_string_list(key_terminals);
+                    resp["terminals"] = json::array();
+                    for (const auto& t : terminals) {
+                        resp["terminals"].push_back(t);
+                    }
+                    return resp.dump();
+                }
+
+                // Launch a terminal (wsl, powershell, cmd) at a project's directory.
+                // GET /_api/open-terminal?config=<path>&type=<wsl|powershell|cmd>
+                if (url_path.rfind("/_api/open-terminal", 0) == 0) {
+                    json resp;
+
+                    auto q = url_path.find('?');
+                    std::string cfg, type;
+                    if (q != std::string::npos) {
+                        std::string qs = url_path.substr(q + 1);
+                        size_t pos = 0;
+                        while (pos < qs.size()) {
+                            auto amp = qs.find('&', pos);
+                            auto seg = qs.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+                            auto eq  = seg.find('=');
+                            if (eq != std::string::npos) {
+                                auto k = seg.substr(0, eq);
+                                auto v = url_decode(seg.substr(eq + 1));
+                                if (k == "config") cfg  = v;
+                                if (k == "type")   type = v;
+                            }
+                            if (amp == std::string::npos) break;
+                            pos = amp + 1;
+                        }
+                    }
+
+                    if (cfg.empty() || type.empty()) {
+                        resp["ok"] = false;
+                        resp["error"] = "missing config or type parameter";
+                        return resp.dump();
+                    }
+
+                    auto reg = suite.GetRegisteredConfig(cfg);
+                    if (!reg.has_value()) {
+                        resp["ok"] = false;
+                        resp["error"] = "config not registered";
+                        return resp.dump();
+                    }
+
+                    fs::path dir = fs::path(cfg).parent_path();
+
+                    std::optional<uid_t> uid = reg->run_as_uid;
+                    std::optional<std::string> home = reg->run_as_home;
+                    if (!uid.has_value()) {
+                        struct stat st;
+                        if (::stat(cfg.c_str(), &st) == 0) {
+                            uid = st.st_uid;
+                            if (!home.has_value()) home = uid_to_home(st.st_uid);
+                        }
+                    }
+
+                    auto err = open_terminal(type, dir, uid, home);
+                    if (!err.has_value()) {
+                        resp["ok"] = true;
+                    } else {
+                        resp["ok"] = false;
+                        resp["error"] = *err;
+                    }
+                    return resp.dump();
+                }
+
                 return std::nullopt;
             };
 

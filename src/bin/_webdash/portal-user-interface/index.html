@@ -173,6 +173,45 @@
             flex-shrink: 0;
         }
 
+        .project-terminals {
+            margin-left: auto;
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+            align-items: center;
+        }
+
+        .project-user+.project-terminals {
+            margin-left: 8px;
+        }
+
+        .terminal-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            background: transparent;
+            cursor: pointer;
+            color: var(--text-dim);
+            padding: 0;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+
+        .terminal-btn:hover {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+        }
+
+        .terminal-btn svg {
+            width: 14px;
+            height: 14px;
+            fill: currentColor;
+        }
+
         /* ─── Config editor modal ─── */
         .modal-backdrop {
             position: fixed;
@@ -997,8 +1036,8 @@
                             const sPct = parts[1];
                             const lPct = parts[2];
                             if (!/^\d{1,3}%$/.test(sPct) || !/^\d{1,3}%$/.test(lPct)) return '';
-                            const sNum = Number(sPct.replace('%',''));
-                            const lNum = Number(lPct.replace('%',''));
+                            const sNum = Number(sPct.replace('%', ''));
+                            const lNum = Number(lPct.replace('%', ''));
                             if (!(Number.isFinite(h) && h >= 0 && h <= 360 && sNum >= 0 && sNum <= 100 && lNum >= 0 && lNum <= 100)) return '';
                             if (parts.length === 3) return `hsl(${h}, ${sNum}%, ${lNum}%)`;
                             const a = parseAlpha(parts[3]);
@@ -1076,13 +1115,53 @@
                 const user = (typeof p === 'object' && p.uid !== undefined)
                     ? `uid ${p.uid}` : '';
 
+                const terminalBtns = (window._editorTerminals || []).map(t =>
+                    `<button class="terminal-btn" title="Open ${esc(t)} terminal" onclick="event.stopPropagation(); openTerminal('${escJs(fullPath)}', '${escJs(t)}')">${terminalIcon(t)}</button>`
+                ).join('');
+
                 return `<div class="project-item" onclick="projectClicked('${escJs(fullPath)}')">
                     <span class="project-icon"></span>
                     <span class="project-path" title="${esc(fullPath)}">${displayNameHtml}</span>
                     ${relPath ? `<span class="project-relpath" title="${esc(relPath)}">${esc(relPath)}</span>` : ''}
                     ${user ? `<span class="project-user">${esc(user)}</span>` : ''}
+                    ${terminalBtns ? `<span class="project-terminals">${terminalBtns}</span>` : ''}
                 </div>`;
             }).join('');
+        }
+
+        // ── Terminal icons & launch ─────────────────────────────
+
+        const _terminalIcons = {
+            wsl: `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>`,
+            powershell: `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M21.83 4H2.17C1.52 4 1 4.52 1 5.17v13.66c0 .65.52 1.17 1.17 1.17h19.66c.65 0 1.17-.52 1.17-1.17V5.17C23 4.52 22.48 4 21.83 4zM5.56 16.2l-.88-.76 5.2-4.02-5.2-3.55.84-.8 6.36 4.33-6.32 4.8zm8.94.3h-3.5v-1.1h3.5v1.1z"/></svg>`,
+        };
+
+        function terminalIcon(type) {
+            return _terminalIcons[type.toLowerCase()] || `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v12zM6 10l4 3-4 3v-6zm5 5h5v2h-5v-2z"/></svg>`;
+        }
+
+        async function openTerminal(configPath, type) {
+            try {
+                const resp = await fetch(apiUrl('open-terminal') + '?config=' + encodeURIComponent(configPath) + '&type=' + encodeURIComponent(type));
+                const j = await resp.json();
+                if (!j.ok && j.error) {
+                    console.warn('Terminal launch failed:', j.error);
+                }
+            } catch (e) {
+                console.error('Terminal launch error:', e);
+            }
+        }
+
+        async function fetchEditorConfig() {
+            try {
+                const resp = await fetch(apiUrl('editor-config'));
+                if (resp.ok) {
+                    const data = await resp.json();
+                    window._editorTerminals = data.terminals || [];
+                }
+            } catch (e) {
+                console.warn('Failed to fetch editor config:', e);
+            }
         }
 
         // ────────────────────────────────────────────────────────
@@ -1291,8 +1370,8 @@
             }
         }
 
-        // ── Boot ── try WebSocket first; falls back to HTTP polling automatically
-        connectWs();
+        // ── Boot ── fetch editor config, then connect
+        fetchEditorConfig().then(() => connectWs());
     </script>
 </body>
 
