@@ -21,6 +21,7 @@ struct RegisteredConfig {
     std::optional<std::string> run_as_home;
     std::optional<std::filesystem::file_time_type> last_write_time;
     std::optional<std::string> project_name;
+    std::optional<int> priority;
 
     RegisteredConfig(const WebDashConfig& c) : config(c) {}
     RegisteredConfig(const WebDashConfig& c, uid_t uid, gid_t gid, const std::string& home)

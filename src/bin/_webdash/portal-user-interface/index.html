@@ -1054,7 +1054,18 @@
                 return;
             }
 
-            el.innerHTML = projects.map(p => {
+            // Sort by priority (ascending, undefined = Infinity), then lexicographically by display name.
+            const sorted = projects.slice().sort((a, b) => {
+                const pa = (typeof a === 'object' && a.priority !== undefined) ? a.priority : Infinity;
+                const pb = (typeof b === 'object' && b.priority !== undefined) ? b.priority : Infinity;
+                if (pa !== pb) return pa - pb;
+
+                const nameA = ((typeof a === 'object' && a.projectName) ? stripHtml(a.projectName) : folderNameFromPath(typeof a === 'string' ? a : a.path)).toLowerCase();
+                const nameB = ((typeof b === 'object' && b.projectName) ? stripHtml(b.projectName) : folderNameFromPath(typeof b === 'string' ? b : b.path)).toLowerCase();
+                return nameA.localeCompare(nameB);
+            });
+
+            el.innerHTML = sorted.map(p => {
                 const fullPath = typeof p === 'string' ? p : p.path;
                 const relPath = (typeof p === 'object' && p.rel) ? p.rel : '';
                 // Show just the parent directory name
@@ -1256,6 +1267,17 @@
             const d = document.createElement('div');
             d.textContent = s;
             return d.innerHTML;
+        }
+
+        function stripHtml(s) {
+            const d = document.createElement('div');
+            d.innerHTML = s;
+            return d.textContent || d.innerText || '';
+        }
+
+        function folderNameFromPath(p) {
+            const parts = p.replace(/\/webdash\.config\.json$/, '').split('/');
+            return parts[parts.length - 1] || p;
         }
 
         function setStatus(ok, transport) {

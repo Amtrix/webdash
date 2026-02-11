@@ -86,6 +86,23 @@ static std::optional<std::string> try_read_project_name_from_config(const std::s
     }
 }
 
+static std::optional<int> try_read_priority_from_config(const std::string& config_path) {
+    try {
+        std::ifstream in(config_path);
+        if (!in.is_open()) return std::nullopt;
+        json j;
+        in >> j;
+        if (!j.is_object()) return std::nullopt;
+        if (!j.contains("priority")) return std::nullopt;
+        const auto& v = j["priority"];
+        if (v.is_number_integer()) return v.get<int>();
+        if (v.is_number_float()) return static_cast<int>(v.get<double>());
+        return std::nullopt;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
 Suite::Suite() {
     _is_alive = true;
 }
@@ -119,6 +136,7 @@ void Suite::LoadSaved() {
                 _scripts.emplace_back(WebDashConfig(path));
                 _scripts.back().last_write_time = try_last_write_time(path);
                 _scripts.back().project_name = try_read_project_name_from_config(path);
+                _scripts.back().priority = try_read_priority_from_config(path);
             } else if (it.is_object()) {
                 const string path = it["path"].get<std::string>();
                 ifstream configStream;
@@ -134,6 +152,7 @@ void Suite::LoadSaved() {
                 RegisteredConfig rc{cfg};
                 rc.last_write_time = try_last_write_time(path);
                 rc.project_name = try_read_project_name_from_config(path);
+                rc.priority = try_read_priority_from_config(path);
                 if (it.contains("uid")) {
                     rc.run_as_uid = it["uid"].get<uid_t>();
                 }
@@ -164,6 +183,7 @@ void Suite::RegisterConfig(const WebDashConfig& config) {
         _scripts.emplace_back(config);
         _scripts.back().last_write_time = try_last_write_time(config.GetPath());
         _scripts.back().project_name = try_read_project_name_from_config(config.GetPath());
+        _scripts.back().priority = try_read_priority_from_config(config.GetPath());
         SerializeAndSave();
     }
 
@@ -195,6 +215,7 @@ void Suite::RegisterConfig(const WebDashConfig& config, uid_t uid, gid_t gid, co
         _scripts.emplace_back(config, uid, gid, home);
         _scripts.back().last_write_time = try_last_write_time(config.GetPath());
         _scripts.back().project_name = try_read_project_name_from_config(config.GetPath());
+        _scripts.back().priority = try_read_priority_from_config(config.GetPath());
         SerializeAndSave();
     }
 
@@ -236,6 +257,7 @@ void Suite::ReloadAll() {
             it.config.Reload();
             it.last_write_time = try_last_write_time(it.config.GetPath());
             it.project_name = try_read_project_name_from_config(it.config.GetPath());
+            it.priority = try_read_priority_from_config(it.config.GetPath());
         }
     }
 
@@ -290,6 +312,7 @@ void Suite::RunOnce() {
                     entry.config.Reload();
                     entry.last_write_time = current_mtime;
                     entry.project_name = try_read_project_name_from_config(entry.config.GetPath());
+                    entry.priority = try_read_priority_from_config(entry.config.GetPath());
                 }
             }
         }
@@ -354,6 +377,9 @@ string Suite::GetRegisteredConfigsJsonDump() {
         }
         if (entry.project_name.has_value()) {
             item["projectName"] = entry.project_name.value();
+        }
+        if (entry.priority.has_value()) {
+            item["priority"] = entry.priority.value();
         }
         arr.push_back(item);
     }
