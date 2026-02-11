@@ -454,7 +454,7 @@ static std::optional<std::string> open_dir_in_editor(
     if (host == "wsl" && is_vscode) {
         if (!distro.empty()) {
             const std::string d = shell_escape_single_quotes(distro);
-            script += "export WSL_DISTRO_NAME='\\''" + d + "\\''; ";
+            script += "export WSL_DISTRO_NAME='" + d + "'; ";
         }
         script += "if [ -z \"$WSL2_GUI_APPS_ENABLED\" ]; then export WSL2_GUI_APPS_ENABLED=1; fi; ";
     }
