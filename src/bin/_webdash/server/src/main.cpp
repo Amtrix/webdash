@@ -15,6 +15,7 @@
 #include <cctype>
 #include <algorithm>
 #include <iomanip>
+#include <unordered_map>
 
 #include <nlohmann/json.hpp>
 
@@ -325,6 +326,331 @@ static std::string url_decode(const std::string& s) {
         out += s[i];
     }
     return out;
+}
+
+static std::unordered_map<std::string, std::string> parse_query_params(const std::string& full_url) {
+    std::unordered_map<std::string, std::string> out;
+    auto q = full_url.find('?');
+    if (q == std::string::npos || q + 1 >= full_url.size()) {
+        return out;
+    }
+
+    std::string qs = full_url.substr(q + 1);
+    size_t pos = 0;
+    while (pos < qs.size()) {
+        auto amp = qs.find('&', pos);
+        auto seg = qs.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+        auto eq = seg.find('=');
+        if (eq != std::string::npos) {
+            auto k = seg.substr(0, eq);
+            auto v = seg.substr(eq + 1);
+            out[k] = url_decode(v);
+        } else if (!seg.empty()) {
+            out[seg] = "";
+        }
+
+        if (amp == std::string::npos) break;
+        pos = amp + 1;
+    }
+
+    return out;
+}
+
+struct WidgetCommandDef {
+    std::string name;
+    std::string type;   // "widget" | "widget-command"
+    std::string output; // path relative to config dir
+    std::optional<std::string> widget_height;
+};
+
+struct WidgetProjectDef {
+    std::string config_path;
+    std::string widget_identifier;
+    std::string project_dir_name;
+    std::optional<std::string> project_name;
+    std::vector<WidgetCommandDef> widget_ui_commands;
+    std::vector<WidgetCommandDef> widget_commands;
+};
+
+static bool path_has_parent_reference(const fs::path& p) {
+    for (const auto& part : p) {
+        if (part == "..") return true;
+    }
+    return false;
+}
+
+static std::optional<WidgetProjectDef> parse_widget_project_config(const std::string& config_path) {
+    try {
+        std::ifstream in(config_path, std::ios::in);
+        if (!in.is_open()) return std::nullopt;
+
+        json j;
+        in >> j;
+        if (!j.is_object()) return std::nullopt;
+
+        if (!j.contains("widget-identifier") || !j["widget-identifier"].is_string()) {
+            return std::nullopt;
+        }
+
+        WidgetProjectDef out;
+        out.config_path = config_path;
+        out.widget_identifier = j["widget-identifier"].get<std::string>();
+        if (out.widget_identifier.empty()) return std::nullopt;
+
+        fs::path config_fs = fs::path(config_path);
+        out.project_dir_name = config_fs.parent_path().filename().string();
+        if (out.project_dir_name.empty()) {
+            out.project_dir_name = out.widget_identifier;
+        }
+
+        if (j.contains("project-name") && j["project-name"].is_string()) {
+            std::string pname = j["project-name"].get<std::string>();
+            if (!pname.empty()) out.project_name = pname;
+        }
+
+        if (!j.contains("commands") || !j["commands"].is_array()) {
+            return std::nullopt;
+        }
+
+        for (const auto& cmd : j["commands"]) {
+            if (!cmd.is_object()) continue;
+            if (!cmd.contains("name") || !cmd["name"].is_string()) continue;
+            if (!cmd.contains("type") || !cmd["type"].is_string()) continue;
+            if (!cmd.contains("output") || !cmd["output"].is_string()) continue;
+
+            WidgetCommandDef def;
+            def.name = cmd["name"].get<std::string>();
+            def.type = cmd["type"].get<std::string>();
+            def.output = cmd["output"].get<std::string>();
+
+            auto try_parse_height = [&cmd]() -> std::optional<std::string> {
+                if (!cmd.contains("widget-height")) return std::nullopt;
+
+                const auto& h = cmd["widget-height"];
+                if (h.is_number_integer()) {
+                    const int v = h.get<int>();
+                    if (v > 0) return std::to_string(v);
+                    return std::nullopt;
+                }
+
+                if (h.is_string()) {
+                    std::string s = h.get<std::string>();
+                    if (!s.empty()) return s;
+                }
+
+                return std::nullopt;
+            };
+            def.widget_height = try_parse_height();
+
+            if (def.name.empty() || def.output.empty()) continue;
+            if (def.type == "widget") {
+                out.widget_ui_commands.push_back(def);
+            } else if (def.type == "widget-command") {
+                out.widget_commands.push_back(def);
+            }
+        }
+
+        if (out.widget_ui_commands.empty() && out.widget_commands.empty()) {
+            return std::nullopt;
+        }
+
+        return out;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+static std::vector<WidgetProjectDef> collect_widget_projects(Suite& suite) {
+    std::vector<WidgetProjectDef> result;
+    auto paths = suite.GetRegisteredConfigPaths();
+    for (const auto& config_path : paths) {
+        auto parsed = parse_widget_project_config(config_path);
+        if (parsed.has_value()) {
+            result.push_back(std::move(parsed.value()));
+        }
+    }
+    return result;
+}
+
+static std::optional<WidgetProjectDef> find_widget_project(Suite& suite, const std::string& widget_identifier) {
+    auto projects = collect_widget_projects(suite);
+    for (const auto& p : projects) {
+        if (p.widget_identifier == widget_identifier) {
+            return p;
+        }
+    }
+    return std::nullopt;
+}
+
+static std::optional<WidgetCommandDef> find_widget_command(const WidgetProjectDef& project,
+                                                           const std::string& command_name,
+                                                           const std::string& expected_type)
+{
+    const auto* source = &project.widget_commands;
+    if (expected_type == "widget") {
+        source = &project.widget_ui_commands;
+    }
+
+    for (const auto& c : *source) {
+        if (c.name == command_name) {
+            return c;
+        }
+    }
+    return std::nullopt;
+}
+
+static json build_network_shared_paths_json(Suite& suite) {
+    json arr = json::array();
+    auto shared_paths = suite.GetNetworkSharedPaths();
+
+    for (const auto& [alias, directory] : shared_paths) {
+        json item;
+        item["name"] = alias;
+        item["directory"] = directory;
+        item["urlPrefix"] = "/" + alias;
+        arr.push_back(item);
+    }
+
+    return arr;
+}
+
+static std::optional<fs::path> sanitize_relative_output_path(const std::string& output_path) {
+    if (output_path.empty()) return std::nullopt;
+
+    fs::path rel = fs::path(output_path).lexically_normal();
+    if (rel.is_absolute()) return std::nullopt;
+    if (path_has_parent_reference(rel)) return std::nullopt;
+
+    return rel;
+}
+
+static json execute_widget_task(Suite& suite,
+                                const WidgetProjectDef& project,
+                                const WidgetCommandDef& command,
+                                const json& payload)
+{
+    json resp;
+    resp["ok"] = false;
+    resp["project"] = project.widget_identifier;
+    resp["command"] = command.name;
+
+    auto reg = suite.GetRegisteredConfig(project.config_path);
+    if (!reg.has_value()) {
+        resp["error"] = "project is no longer registered";
+        return resp;
+    }
+
+    auto rel_output = sanitize_relative_output_path(command.output);
+    if (!rel_output.has_value()) {
+        resp["error"] = "invalid command output path";
+        return resp;
+    }
+
+    std::vector<std::string> extra_args;
+    if (command.type == "widget-command") {
+        json effective_payload = json::object();
+        if (payload.is_object()) {
+            effective_payload = payload;
+        } else if (!payload.is_null()) {
+            effective_payload["value"] = payload;
+        }
+
+        effective_payload["__webdash"]["project"] = project.widget_identifier;
+        effective_payload["__webdash"]["networkSharedPaths"] = build_network_shared_paths_json(suite);
+        extra_args.push_back(effective_payload.dump());
+    } else if (!payload.is_null()) {
+        extra_args.push_back(payload.dump());
+    }
+
+    WebDashType::RunConfig run_cfg;
+    run_cfg.skip_frequency_check = true;
+    run_cfg.run_as_uid = reg->run_as_uid;
+    run_cfg.run_as_gid = reg->run_as_gid;
+    run_cfg.run_as_home = reg->run_as_home;
+
+    auto run_results = reg->config.Run(command.name, run_cfg, extra_args);
+    if (run_results.empty()) {
+        resp["error"] = "task did not execute (missing command?)";
+        return resp;
+    }
+
+    bool any_failure = false;
+    for (const auto& rr : run_results) {
+        if (!rr.skipped && rr.return_code != 0) {
+            any_failure = true;
+            break;
+        }
+    }
+    if (any_failure) {
+        resp["error"] = "task execution failed";
+        return resp;
+    }
+
+    fs::path config_dir = fs::path(project.config_path).parent_path();
+    fs::path source = config_dir / *rel_output;
+
+    std::error_code ec;
+    fs::path source_canon = fs::weakly_canonical(source, ec);
+    if (ec) {
+        resp["error"] = "command output does not exist";
+        return resp;
+    }
+
+    fs::path config_dir_canon = fs::weakly_canonical(config_dir, ec);
+    if (ec) {
+        resp["error"] = "failed to access config directory";
+        return resp;
+    }
+
+    auto rel_from_cfg = fs::relative(source_canon, config_dir_canon, ec);
+    if (ec || rel_from_cfg.empty() || *rel_from_cfg.begin() == "..") {
+        resp["error"] = "output path escapes project directory";
+        return resp;
+    }
+
+    if (!fs::exists(source_canon) || !fs::is_regular_file(source_canon)) {
+        resp["error"] = "output file was not generated";
+        return resp;
+    }
+
+    fs::path storage_dir = WebDashCore::Get().GetWebDashRootDirectory() /
+                           "app-persistent" / "data" / project.project_dir_name;
+    fs::path persisted_output = storage_dir / rel_from_cfg;
+
+    fs::create_directories(persisted_output.parent_path(), ec);
+    if (ec) {
+        resp["error"] = "failed to prepare persistent output directory";
+        return resp;
+    }
+
+    fs::copy_file(source_canon, persisted_output, fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        resp["error"] = "failed to persist output file";
+        return resp;
+    }
+
+    std::ifstream in(persisted_output, std::ios::in | std::ios::binary);
+    if (!in.is_open()) {
+        resp["error"] = "failed to read persisted output file";
+        return resp;
+    }
+
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string content = ss.str();
+
+    resp["ok"] = true;
+    resp["output"] = rel_from_cfg.generic_string();
+    resp["persistedPath"] = persisted_output.string();
+    resp["content"] = content;
+
+    try {
+        resp["data"] = json::parse(content);
+    } catch (...) {
+        // Not JSON output; callers can still use "content".
+    }
+
+    return resp;
 }
 
 // Returns:
@@ -964,6 +1290,95 @@ int execute_main()
                     }
                     return arr.dump();
                 }
+                if (url_path == "/_api/network-shared-paths") {
+                    return build_network_shared_paths_json(suite).dump();
+                }
+                if (url_path == "/_api/widgets") {
+                    json out = json::array();
+                    auto widget_projects = collect_widget_projects(suite);
+
+                    for (const auto& project : widget_projects) {
+                        json project_json;
+                        project_json["project"] = project.widget_identifier;
+                        project_json["projectDir"] = project.project_dir_name;
+                        project_json["config"] = project.config_path;
+                        if (project.project_name.has_value()) {
+                            project_json["projectName"] = project.project_name.value();
+                        }
+
+                        json command_arr = json::array();
+                        for (const auto& cmd : project.widget_commands) {
+                            command_arr.push_back(cmd.name);
+                        }
+                        project_json["commands"] = command_arr;
+
+                        json widgets = json::array();
+                        for (const auto& ui_cmd : project.widget_ui_commands) {
+                            json widget_item;
+                            widget_item["name"] = ui_cmd.name;
+                            widget_item["output"] = ui_cmd.output;
+                            if (ui_cmd.widget_height.has_value()) {
+                                widget_item["height"] = ui_cmd.widget_height.value();
+                            }
+
+                            json exec_result = execute_widget_task(suite, project, ui_cmd, json());
+                            widget_item["ok"] = exec_result.value("ok", false);
+                            if (exec_result.value("ok", false)) {
+                                widget_item["html"] = exec_result.value("content", "");
+                                widget_item["persistedPath"] = exec_result.value("persistedPath", "");
+                            } else {
+                                widget_item["error"] = exec_result.value("error", "failed to load widget");
+                            }
+
+                            widgets.push_back(widget_item);
+                        }
+
+                        project_json["widgets"] = widgets;
+                        out.push_back(project_json);
+                    }
+
+                    return out.dump();
+                }
+                if (url_path.rfind("/_api/widget-command", 0) == 0) {
+                    json resp;
+                    auto params = parse_query_params(url_path);
+
+                    const std::string project = params.count("project") ? params["project"] : "";
+                    const std::string command = params.count("command") ? params["command"] : "";
+                    const std::string payload_raw = params.count("payload") ? params["payload"] : "";
+
+                    if (project.empty() || command.empty()) {
+                        resp["ok"] = false;
+                        resp["error"] = "missing project or command parameter";
+                        return resp.dump();
+                    }
+
+                    auto widget_project = find_widget_project(suite, project);
+                    if (!widget_project.has_value()) {
+                        resp["ok"] = false;
+                        resp["error"] = "unknown widget project";
+                        return resp.dump();
+                    }
+
+                    auto cmd = find_widget_command(widget_project.value(), command, "widget-command");
+                    if (!cmd.has_value()) {
+                        resp["ok"] = false;
+                        resp["error"] = "unknown widget command";
+                        return resp.dump();
+                    }
+
+                    json payload = json();
+                    if (!payload_raw.empty()) {
+                        try {
+                            payload = json::parse(payload_raw);
+                        } catch (...) {
+                            payload = payload_raw;
+                        }
+                    }
+
+                    resp = execute_widget_task(suite, widget_project.value(), cmd.value(), payload);
+                    return resp.dump();
+                }
                 if (url_path == "/_api/git-status") {
                     // Collect unique git repo roots from registered config paths
                     json arr = json::array();
@@ -1486,6 +1901,70 @@ int execute_main()
                 resp["ok"] = false;
                 resp["error"] = string("parse error: ") + e.what();
             }
+            reply(resp.dump());
+        });
+
+    // ── WIDGET_COMMAND ─────────────────────────────────────────────────
+    // Payload JSON (flexible):
+    //   {
+    //     "type": "widget-command",
+    //     "project": "<widget-identifier>",
+    //     "command": "get-all-songs",
+    //     "payload": <json-payload>
+    //   }
+    // Also supports payload.command when command is omitted at top-level.
+    websocket::dispatcher.On(IpcCommand::WIDGET_COMMAND,
+        [&suite](const IpcMsgParser::Parsed& msg, IpcDispatcher::IpcResponder reply) {
+            json resp;
+            try {
+                json request = json::parse(msg.payload);
+
+                const std::string type = request.value("type", "");
+                if (!type.empty() && type != "widget-command") {
+                    resp["ok"] = false;
+                    resp["error"] = "invalid type for widget-command payload";
+                    reply(resp.dump());
+                    return;
+                }
+
+                const std::string project = request.value("project", "");
+                std::string command = request.value("command", "");
+
+                json payload = request.contains("payload") ? request["payload"] : json();
+                if (command.empty() && payload.is_object() && payload.contains("command") && payload["command"].is_string()) {
+                    command = payload["command"].get<std::string>();
+                    payload.erase("command");
+                }
+
+                if (project.empty() || command.empty()) {
+                    resp["ok"] = false;
+                    resp["error"] = "missing project or command";
+                    reply(resp.dump());
+                    return;
+                }
+
+                auto widget_project = find_widget_project(suite, project);
+                if (!widget_project.has_value()) {
+                    resp["ok"] = false;
+                    resp["error"] = "unknown widget project";
+                    reply(resp.dump());
+                    return;
+                }
+
+                auto cmd = find_widget_command(widget_project.value(), command, "widget-command");
+                if (!cmd.has_value()) {
+                    resp["ok"] = false;
+                    resp["error"] = "unknown widget command";
+                    reply(resp.dump());
+                    return;
+                }
+
+                resp = execute_widget_task(suite, widget_project.value(), cmd.value(), payload);
+            } catch (const std::exception& e) {
+                resp["ok"] = false;
+                resp["error"] = std::string("parse error: ") + e.what();
+            }
+
             reply(resp.dump());
         });
 

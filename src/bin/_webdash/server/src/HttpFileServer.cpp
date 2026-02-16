@@ -280,7 +280,7 @@ bool HttpFileServer::HandleClient(int client_fd) {
         return false;
     }
 
-    // Read and serve the file
+    // Open file for streaming
     ifstream file(filepath, ios::binary);
     if (!file.is_open()) {
         string body = "403 Forbidden";
@@ -293,27 +293,148 @@ bool HttpFileServer::HandleClient(int client_fd) {
         return false;
     }
 
-    // Read file content
-    ostringstream file_content;
-    file_content << file.rdbuf();
-    string body = file_content.str();
-
     string mime = GetMimeType(filepath);
 
-    string response = "HTTP/1.1 200 OK\r\n" + cors_headers +
-                     "Content-Type: " + mime + "\r\n"
-                     "Content-Length: " + to_string(body.size()) + "\r\n"
-                     "Cache-Control: no-cache\r\n"
-                     "\r\n";
+    std::error_code ec;
+    uint64_t file_size = fs::file_size(filepath, ec);
+    if (ec) {
+        string body = "500 Internal Server Error";
+        string response = "HTTP/1.1 500 Internal Server Error\r\n" + cors_headers +
+                         "Content-Type: text/plain\r\n"
+                         "Content-Length: " + to_string(body.size()) + "\r\n"
+                         "\r\n";
+        if (!is_head) response += body;
+        send(client_fd, response.c_str(), response.size(), 0);
+        return false;
+    }
+
+    // Parse optional Range header for byte-range requests (important for media seeking).
+    bool has_range = false;
+    bool range_valid = false;
+    uint64_t range_start = 0;
+    uint64_t range_end = (file_size == 0 ? 0 : file_size - 1);
+
+    {
+        string lower_req = request;
+        transform(lower_req.begin(), lower_req.end(), lower_req.begin(), ::tolower);
+
+        size_t pos = lower_req.find("\nrange:");
+        if (pos == string::npos && lower_req.rfind("range:", 0) == 0) {
+            pos = 0;
+        }
+
+        if (pos != string::npos) {
+            has_range = true;
+            size_t line_start = (pos == 0) ? 0 : pos + 1;
+            size_t line_end = request.find('\n', line_start);
+            string line = request.substr(line_start, line_end == string::npos ? string::npos : line_end - line_start);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+
+            size_t colon = line.find(':');
+            string value = (colon == string::npos) ? "" : line.substr(colon + 1);
+            while (!value.empty() && isspace(static_cast<unsigned char>(value.front()))) value.erase(value.begin());
+
+            const string prefix = "bytes=";
+            if (value.rfind(prefix, 0) == 0 && file_size > 0) {
+                string spec = value.substr(prefix.size());
+                size_t dash = spec.find('-');
+                if (dash != string::npos) {
+                    string sstart = spec.substr(0, dash);
+                    string send = spec.substr(dash + 1);
+
+                    try {
+                        if (sstart.empty()) {
+                            // Suffix form: bytes=-N
+                            uint64_t suffix_len = static_cast<uint64_t>(stoull(send));
+                            if (suffix_len > 0) {
+                                range_start = (suffix_len >= file_size) ? 0 : (file_size - suffix_len);
+                                range_end = file_size - 1;
+                                range_valid = true;
+                            }
+                        } else {
+                            range_start = static_cast<uint64_t>(stoull(sstart));
+                            if (!send.empty()) {
+                                range_end = static_cast<uint64_t>(stoull(send));
+                            } else {
+                                range_end = file_size - 1;
+                            }
+
+                            if (range_start < file_size) {
+                                if (range_end >= file_size) range_end = file_size - 1;
+                                if (range_end >= range_start) {
+                                    range_valid = true;
+                                }
+                            }
+                        }
+                    } catch (...) {
+                        range_valid = false;
+                    }
+                }
+            }
+        }
+    }
+
+    if (has_range && !range_valid) {
+        string response = "HTTP/1.1 416 Range Not Satisfiable\r\n" + cors_headers +
+                         "Content-Type: " + mime + "\r\n"
+                         "Accept-Ranges: bytes\r\n"
+                         "Content-Range: bytes */" + to_string(file_size) + "\r\n"
+                         "Content-Length: 0\r\n"
+                         "Cache-Control: no-cache\r\n"
+                         "\r\n";
+        send(client_fd, response.c_str(), response.size(), 0);
+        return false;
+    }
+
+    const bool is_partial = has_range && range_valid;
+    const uint64_t body_start = is_partial ? range_start : 0;
+    const uint64_t body_end = is_partial ? range_end : (file_size == 0 ? 0 : file_size - 1);
+    const uint64_t body_len = is_partial ? (body_end - body_start + 1) : file_size;
+
+    string response;
+    if (is_partial) {
+        response = "HTTP/1.1 206 Partial Content\r\n" + cors_headers +
+                  "Content-Type: " + mime + "\r\n"
+                  "Accept-Ranges: bytes\r\n"
+                  "Content-Range: bytes " + to_string(body_start) + "-" + to_string(body_end) + "/" + to_string(file_size) + "\r\n"
+                  "Content-Length: " + to_string(body_len) + "\r\n"
+                  "Cache-Control: no-cache\r\n"
+                  "\r\n";
+    } else {
+        response = "HTTP/1.1 200 OK\r\n" + cors_headers +
+                  "Content-Type: " + mime + "\r\n"
+                  "Accept-Ranges: bytes\r\n"
+                  "Content-Length: " + to_string(body_len) + "\r\n"
+                  "Cache-Control: no-cache\r\n"
+                  "\r\n";
+    }
 
     send(client_fd, response.c_str(), response.size(), 0);
-    if (!is_head) {
-        // Send body in chunks to handle large files
-        size_t sent = 0;
-        while (sent < body.size()) {
-            ssize_t s = send(client_fd, body.c_str() + sent, body.size() - sent, 0);
-            if (s <= 0) break;
-            sent += s;
+
+    if (!is_head && body_len > 0) {
+        file.clear();
+        file.seekg(static_cast<std::streamoff>(body_start), ios::beg);
+
+        uint64_t remaining = body_len;
+        char chunk[64 * 1024];
+        while (remaining > 0 && file.good()) {
+            const size_t want = static_cast<size_t>(std::min<uint64_t>(remaining, sizeof(chunk)));
+            file.read(chunk, static_cast<std::streamsize>(want));
+            std::streamsize got = file.gcount();
+            if (got <= 0) break;
+
+            size_t sent = 0;
+            while (sent < static_cast<size_t>(got)) {
+                ssize_t s = send(client_fd, chunk + sent, static_cast<size_t>(got) - sent, 0);
+                if (s <= 0) {
+                    remaining = 0;
+                    break;
+                }
+                sent += static_cast<size_t>(s);
+            }
+
+            if (remaining < static_cast<uint64_t>(got)) break;
+            remaining -= static_cast<uint64_t>(got);
         }
     }
 

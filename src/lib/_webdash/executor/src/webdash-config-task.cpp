@@ -402,15 +402,25 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
 
     // Apply $.args() substitution at runtime
     if (!config.extra_args.empty()) {
+        auto shell_escape_single_quotes = [](const string& value) -> string {
+            string out;
+            out.reserve(value.size() + 2);
+            out += "'";
+            for (char c : value) {
+                if (c == '\'') {
+                    out += "'\"'\"'";
+                } else {
+                    out += c;
+                }
+            }
+            out += "'";
+            return out;
+        };
+
         string args_str;
         for (size_t i = 0; i < config.extra_args.size(); ++i) {
             if (i > 0) args_str += " ";
-            // Quote arguments containing spaces
-            if (config.extra_args[i].find(' ') != string::npos) {
-                args_str += "\"" + config.extra_args[i] + "\"";
-            } else {
-                args_str += config.extra_args[i];
-            }
+            args_str += shell_escape_single_quotes(config.extra_args[i]);
         }
         action = WebDashUtils::ApplySubstitutions(action, {{WebDashConst::Public::kSubstArgs, args_str}});
     } else {

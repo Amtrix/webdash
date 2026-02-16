@@ -89,6 +89,18 @@
             }
         }
 
+        @media (max-width: 640px) {
+            .container {
+                padding: 0;
+                gap: 12px;
+            }
+
+            .widget-list {
+                padding-left: 0;
+                padding-right: 0;
+            }
+        }
+
         .panel {
             background: var(--surface);
             border: 1px solid var(--border);
@@ -125,6 +137,11 @@
             padding: 0;
             max-height: 520px;
             overflow-y: auto;
+        }
+
+        #widgetList {
+            max-height: none;
+            overflow: visible;
         }
 
         /* ─── Registered projects ─── */
@@ -538,6 +555,57 @@
             font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
             color: var(--text);
         }
+
+        /* ─── Widgets ─── */
+        .widget-list {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 12px;
+            padding: 12px;
+        }
+
+        @media (min-width: 900px) {
+            .widget-list {
+                grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+            }
+        }
+
+        .widget-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.01);
+        }
+
+        .widget-card-header {
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text-dim);
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .widget-title {
+            color: var(--text);
+            font-weight: 600;
+        }
+
+        .widget-frame {
+            width: 100%;
+            height: 280px;
+            border: 0;
+            background: #000;
+        }
+
+        .widget-error {
+            padding: 12px;
+            color: var(--red);
+            font-size: 12px;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            white-space: pre-wrap;
+        }
     </style>
 </head>
 
@@ -588,6 +656,19 @@
     </div>
 
     <div class="container">
+        <div class="panel full-width">
+            <div class="panel-header">
+                <h2>Widgets</h2>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <button class="btn-refresh" onclick="refreshWidgets(this)" title="Refresh widgets">⟳</button>
+                    <span class="badge" id="widgetCount">0</span>
+                </div>
+            </div>
+            <div class="panel-body" id="widgetList">
+                <div class="empty-state">Loading widgets…</div>
+            </div>
+        </div>
+
         <div class="panel full-width">
             <div class="panel-header">
                 <h2>Git Status</h2>
@@ -662,6 +743,8 @@
         let loadQueue = Promise.resolve();
         let didInitialIpLoad = false;
         let didInitialGitLoad = false;
+        let didInitialWidgetLoad = false;
+        let widgetReqSeq = 0;
 
         function enqueueLoad(fn) {
             loadQueue = loadQueue.then(fn).catch(() => { /* swallow */ });
@@ -754,6 +837,7 @@
                 stopPolling();
                 setStatus(true, 'ws');
                 enqueueLoad(async () => { await refreshViaWs(); });
+                enqueueLoad(async () => { await fetchWidgets(); didInitialWidgetLoad = true; });
                 enqueueLoad(async () => { await fetchGitStatus(); didInitialGitLoad = true; });
                 enqueueLoad(async () => { await fetchIpStates(); didInitialIpLoad = true; });
             };
@@ -809,6 +893,7 @@
                 renderProjects(await projResp.json());
                 renderActions(await actResp.json());
                 if (mode !== 'ws' && mode !== 'http') {
+                    enqueueLoad(async () => { await fetchWidgets(); didInitialWidgetLoad = true; });
                     enqueueLoad(async () => { await fetchGitStatus(); didInitialGitLoad = true; });
                     enqueueLoad(async () => { await fetchIpStates(); didInitialIpLoad = true; });
                 }
@@ -882,6 +967,241 @@
             }
         }
 
+        async function runWidgetCommand(project, command, payload) {
+            if (mode === 'ws' && ws && ws.readyState === WebSocket.OPEN) {
+                const raw = await ipcRequest('widget-command', JSON.stringify({
+                    type: 'widget-command',
+                    project,
+                    command,
+                    payload: payload === undefined ? null : payload,
+                }), 15000);
+                return JSON.parse(raw);
+            }
+
+            const url = apiUrl('widget-command') +
+                '?project=' + encodeURIComponent(project) +
+                '&command=' + encodeURIComponent(command) +
+                '&payload=' + encodeURIComponent(JSON.stringify(payload === undefined ? null : payload));
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error('widget-command request failed');
+            return resp.json();
+        }
+
+        function widgetBridgeScript(project) {
+            return `<script>(function(){
+                const __project = ${JSON.stringify(project)};
+                let __seq = 0;
+                const __pending = new Map();
+
+                function post(req){ parent.postMessage(req, '*'); }
+
+                window.webdash = {
+                    runCommand: function(name, payload, callback) {
+                        if (typeof payload === 'function') {
+                            callback = payload;
+                            payload = undefined;
+                        }
+
+                        const requestId = 'wreq-' + (++__seq);
+                        const req = {
+                            type: 'webdash-widget-command',
+                            requestId,
+                            project: __project,
+                            command: String(name || ''),
+                            payload: payload === undefined ? null : payload,
+                        };
+
+                        const promise = new Promise(function(resolve, reject) {
+                            __pending.set(requestId, { resolve, reject, callback });
+                            post(req);
+                        });
+
+                        if (typeof callback === 'function') {
+                            promise.then(function(result) {
+                                callback(result);
+                            }).catch(function(err) {
+                                callback(null, err && err.message ? err.message : String(err));
+                            });
+                        }
+
+                        return promise;
+                    }
+                };
+
+                window.addEventListener('message', function(ev) {
+                    const data = ev && ev.data;
+                    if (!data || data.type !== 'webdash-widget-response') return;
+                    const entry = __pending.get(data.requestId);
+                    if (!entry) return;
+                    __pending.delete(data.requestId);
+                    if (data.ok) {
+                        entry.resolve(data.data);
+                    } else {
+                        entry.reject(new Error(data.error || 'widget command failed'));
+                    }
+                });
+            })();<\/script>`;
+        }
+
+        function buildWidgetSrcdoc(project, html) {
+            return widgetBridgeScript(project) + (html || '');
+        }
+
+        function normalizeWidgetHeight(rawHeight) {
+            if (rawHeight == null) return null;
+
+            if (typeof rawHeight === 'number' && Number.isFinite(rawHeight)) {
+                const px = Math.max(1, Math.floor(rawHeight));
+                return `${px}px`;
+            }
+
+            const text = String(rawHeight).trim();
+            if (!text) return null;
+
+            if (/^\d+$/.test(text)) {
+                return `${text}px`;
+            }
+
+            if (/^\d+(?:\.\d+)?(px|rem|em|vh|vw|%)$/.test(text)) {
+                return text;
+            }
+
+            return null;
+        }
+
+        function mountWidgetFrames(rows) {
+            for (let idx = 0; idx < rows.length; idx++) {
+                const row = rows[idx];
+                if (!row || !row.widget || !row.widget.ok) continue;
+
+                const frame = document.getElementById(`widget-frame-${idx}`);
+                if (!frame) continue;
+
+                const runtimeHeight = normalizeWidgetHeight(row.widget.height);
+                if (runtimeHeight) {
+                    frame.style.height = runtimeHeight;
+                }
+
+                try {
+                    const doc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+                    if (!doc) continue;
+                    const html = buildWidgetSrcdoc(row.project.project, row.widget.html || '');
+                    doc.open();
+                    doc.write(html);
+                    doc.close();
+                } catch (e) {
+                    const card = frame.closest('.widget-card');
+                    if (card) {
+                        const error = document.createElement('div');
+                        error.className = 'widget-error';
+                        error.textContent = `Failed to render widget iframe: ${e && e.message ? e.message : e}`;
+                        frame.replaceWith(error);
+                    }
+                }
+            }
+        }
+
+        function renderWidgets(projects) {
+            const el = document.getElementById('widgetList');
+
+            const rows = [];
+            for (const project of (projects || [])) {
+                const widgets = project.widgets || [];
+                for (const widget of widgets) {
+                    rows.push({
+                        project,
+                        widget,
+                    });
+                }
+            }
+
+            document.getElementById('widgetCount').textContent = String(rows.length);
+
+            if (rows.length === 0) {
+                el.innerHTML = '<div class="empty-state">No widget projects detected</div>';
+                return;
+            }
+
+            el.classList.add('widget-list');
+            el.innerHTML = rows.map((r, idx) => {
+                const project = r.project;
+                const widget = r.widget;
+                const stripTags = (s) => String(s || '').replace(/<[^>]*>/g, '').trim();
+                const baseTitle = stripTags(project.projectName || '') || project.project || project.projectDir || 'Widget';
+                const widgetName = String(widget.name || 'widget');
+                const title = widgetName === 'load-player-ui'
+                    ? baseTitle
+                    : `${baseTitle} • ${widgetName}`;
+
+                if (!widget.ok) {
+                    return `<div class="widget-card">
+                        <div class="widget-card-header">
+                            <span class="widget-title">${esc(title)}</span>
+                            <span>${esc(project.project || '')}</span>
+                        </div>
+                        <div class="widget-error">${esc(widget.error || 'Failed to load widget')}</div>
+                    </div>`;
+                }
+
+                return `<div class="widget-card">
+                    <div class="widget-card-header">
+                        <span class="widget-title">${esc(title)}</span>
+                        <span>${esc(project.project || '')}</span>
+                    </div>
+                    <iframe class="widget-frame" sandbox="allow-scripts allow-same-origin" title="${esc(title)}" id="widget-frame-${idx}"${normalizeWidgetHeight(widget.height) ? ` style="height:${normalizeWidgetHeight(widget.height)}"` : ''}></iframe>
+                </div>`;
+            }).join('');
+
+            setTimeout(() => mountWidgetFrames(rows), 0);
+        }
+
+        async function fetchWidgets() {
+            const resp = await fetch(apiUrl('widgets'));
+            if (!resp.ok) throw new Error('widget list fetch failed');
+            const projects = await resp.json();
+            renderWidgets(projects);
+        }
+
+        async function refreshWidgets(btn) {
+            if (btn) btn.classList.add('spinning');
+            try {
+                await fetchWidgets();
+            } catch (e) {
+                console.warn('widget refresh error:', e);
+            }
+            if (btn) setTimeout(() => btn.classList.remove('spinning'), 400);
+        }
+
+        window.addEventListener('message', async (event) => {
+            const data = event && event.data;
+            if (!data || data.type !== 'webdash-widget-command') return;
+
+            const requestId = data.requestId;
+            const source = event.source;
+            if (!source || !requestId) return;
+
+            const reply = (payload) => {
+                try {
+                    source.postMessage({
+                        type: 'webdash-widget-response',
+                        requestId,
+                        ...payload,
+                    }, '*');
+                } catch (_) { }
+            };
+
+            try {
+                const result = await runWidgetCommand(data.project, data.command, data.payload);
+                if (!result || !result.ok) {
+                    reply({ ok: false, error: (result && result.error) ? result.error : 'widget command failed' });
+                    return;
+                }
+                reply({ ok: true, data: result.data !== undefined ? result.data : result.content });
+            } catch (e) {
+                reply({ ok: false, error: (e && e.message) ? e.message : String(e) });
+            }
+        });
+
         async function refreshIpStates(btn) {
             if (btn) { btn.classList.add('spinning'); }
             try {
@@ -939,6 +1259,7 @@
                     if (projResp.ok) renderProjects(await projResp.json());
                     if (actResp.ok) renderActions(await actResp.json());
                 }
+                await fetchWidgets();
                 await fetchGitStatus();
                 await fetchIpStates();
             } catch (e) {

@@ -50,6 +50,7 @@ enum class IpcCommand {
     RUN_TASK,
     WSL_FORWARDED_PORTS_LIST,
     WRITE_CONFIG,
+    WIDGET_COMMAND,
 };
 
 
@@ -88,6 +89,7 @@ struct IpcRegistry {
             { IpcCommand::RUN_TASK,               "run-task",                  true,   "Run a specific task by config path and name" },
             { IpcCommand::WSL_FORWARDED_PORTS_LIST,"wsl-forwarded-ports-list", true,   "List configured WSL forwarded ports (server-side, no client sudo)" },
             { IpcCommand::WRITE_CONFIG,           "write-config",             true,   "Write a registered webdash.config.json (portal editor)" },
+            { IpcCommand::WIDGET_COMMAND,         "widget-command",           true,   "Execute a widget-command and return its output" },
         };
         return commands;
     }
