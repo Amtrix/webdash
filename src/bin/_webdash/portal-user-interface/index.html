@@ -32,6 +32,95 @@
             min-height: 100vh;
         }
 
+        body.widget-app-mode header,
+        body.widget-app-mode #gitPanel,
+        body.widget-app-mode #configModal,
+        body.widget-app-mode #projectList,
+        body.widget-app-mode #actionList,
+        body.widget-app-mode #ipStateBody {
+            display: none !important;
+        }
+
+        body.widget-app-mode .container {
+            max-width: none;
+            margin: 0;
+            padding: 0;
+            grid-template-columns: 1fr;
+            gap: 0;
+        }
+
+        body.widget-app-mode .container:first-of-type {
+            display: none;
+        }
+
+        body.widget-app-mode .container:nth-of-type(2) {
+            height: 100dvh;
+            min-height: 100dvh;
+        }
+
+        body.widget-app-mode .container .panel {
+            display: none;
+        }
+
+        body.widget-app-mode {
+            min-height: 100dvh;
+            height: 100dvh;
+            overflow: hidden;
+        }
+
+        body.widget-app-mode #widgetsPanel {
+            display: block;
+            border: 0;
+            border-radius: 0;
+            height: 100%;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        body.widget-app-mode #widgetsPanel .panel-header {
+            display: none;
+        }
+
+        body.widget-app-mode #widgetList {
+            padding: 0;
+            height: 100%;
+            max-height: none;
+            overflow: hidden;
+            display: flex;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+
+        body.widget-app-mode .widget-list {
+            height: 100%;
+            padding: 0;
+            gap: 0;
+            display: flex;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+
+        body.widget-app-mode .widget-card {
+            height: 100%;
+            border: 0;
+            border-radius: 0;
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+
+        body.widget-app-mode .widget-card-header {
+            display: none;
+        }
+
+        body.widget-app-mode .widget-frame {
+            height: auto !important;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+
         header {
             background: var(--surface);
             border-bottom: 1px solid var(--border);
@@ -587,6 +676,26 @@
             gap: 8px;
         }
 
+        .widget-header-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .widget-pop-btn {
+            border: 1px solid var(--border);
+            background: rgba(88, 166, 255, 0.12);
+            color: var(--accent);
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        .widget-pop-btn:hover {
+            background: rgba(88, 166, 255, 0.22);
+        }
+
         .widget-title {
             color: var(--text);
             font-weight: 600;
@@ -656,7 +765,7 @@
     </div>
 
     <div class="container">
-        <div class="panel full-width">
+        <div class="panel full-width" id="widgetsPanel">
             <div class="panel-header">
                 <h2>Widgets</h2>
                 <div style="display:flex;align-items:center;gap:8px">
@@ -669,7 +778,7 @@
             </div>
         </div>
 
-        <div class="panel full-width">
+        <div class="panel full-width" id="gitPanel">
             <div class="panel-header">
                 <h2>Git Status</h2>
                 <div style="display:flex;align-items:center;gap:8px">
@@ -745,6 +854,16 @@
         let didInitialGitLoad = false;
         let didInitialWidgetLoad = false;
         let widgetReqSeq = 0;
+        let currentWidgetRows = [];
+
+        const queryParams = new URLSearchParams(location.search);
+        const widgetAppProject = (queryParams.get('widget_project') || '').trim();
+        const widgetAppCommand = (queryParams.get('widget_command') || '').trim();
+        const isWidgetAppMode = !!(widgetAppProject && widgetAppCommand);
+
+        if (isWidgetAppMode) {
+            document.body.classList.add('widget-app-mode');
+        }
 
         function enqueueLoad(fn) {
             loadQueue = loadQueue.then(fn).catch(() => { /* swallow */ });
@@ -1101,10 +1220,194 @@
             }
         }
 
+        function buildWidgetPopoutHtml(title) {
+            const safeTitle = String(title || 'Widget');
+            return `<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${esc(safeTitle)} · WebDash</title>
+    <style>
+        :root {
+            --bg: #0e1117;
+            --surface: #161b22;
+            --border: #30363d;
+            --text: #c9d1d9;
+            --accent: #58a6ff;
+        }
+        * { box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+        body { display: flex; flex-direction: column; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; }
+        .bar {
+            height: 38px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 0 10px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            flex: 0 0 auto;
+        }
+        .title {
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: var(--text);
+        }
+        .close-btn {
+            border: 1px solid var(--border);
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--accent);
+            border-radius: 4px;
+            font-size: 11px;
+            padding: 3px 9px;
+            cursor: pointer;
+        }
+        iframe {
+            width: 100%;
+            height: calc(100% - 38px);
+            border: 0;
+            background: #000;
+            flex: 1 1 auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="bar">
+        <div class="title">${esc(safeTitle)}</div>
+        <button class="close-btn" onclick="window.close()">Close</button>
+    </div>
+    <iframe id="widgetPopFrame" sandbox="allow-scripts allow-same-origin" title="${esc(safeTitle)}"></iframe>
+    <script>
+        const __pendingWidgetCalls = new Map();
+
+        window.addEventListener('message', function(ev) {
+            const data = ev && ev.data;
+            if (!data) return;
+
+            if (data.type === 'webdash-widget-command') {
+                const requestId = data.requestId;
+                if (!requestId) return;
+
+                __pendingWidgetCalls.set(requestId, ev.source);
+
+                if (!window.opener || window.opener.closed) {
+                    const src = __pendingWidgetCalls.get(requestId);
+                    __pendingWidgetCalls.delete(requestId);
+                    if (src) {
+                        src.postMessage({
+                            type: 'webdash-widget-response',
+                            requestId,
+                            ok: false,
+                            error: 'Portal window is unavailable'
+                        }, '*');
+                    }
+                    return;
+                }
+
+                window.opener.postMessage({
+                    type: 'webdash-popup-widget-command',
+                    requestId,
+                    project: data.project,
+                    command: data.command,
+                    payload: data.payload
+                }, '*');
+                return;
+            }
+
+            if (data.type === 'webdash-popup-widget-response') {
+                const requestId = data.requestId;
+                const src = __pendingWidgetCalls.get(requestId);
+                if (!src) return;
+                __pendingWidgetCalls.delete(requestId);
+
+                src.postMessage({
+                    type: 'webdash-widget-response',
+                    requestId,
+                    ok: !!data.ok,
+                    data: data.data,
+                    error: data.error || null
+                }, '*');
+            }
+        });
+    <\/script>
+</body>
+</html>`;
+        }
+
+        async function tryOpenNativeWidgetWindow(row) {
+            if (!row || !row.widget || !row.widget.ok) return false;
+
+            const payload = {
+                project: String(row.project && row.project.project ? row.project.project : ''),
+                command: String(row.widget && row.widget.name ? row.widget.name : ''),
+                portalPath: String(location.pathname || ''),
+                width: 920,
+                height: 680,
+            };
+
+            if (!payload.project || !payload.command) return false;
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                try {
+                    const raw = await ipcRequest('open-widget-window', JSON.stringify(payload), 5000);
+                    const resp = JSON.parse(raw || '{}');
+                    if (resp && resp.ok) {
+                        return true;
+                    }
+                    if (resp && resp.error) {
+                        showEditorAlert(`Native pop-out failed: ${resp.error}`);
+                    }
+                } catch (e) {
+                    // Fall through to HTTP fallback.
+                }
+            }
+
+            try {
+                const qs = new URLSearchParams({
+                    project: payload.project,
+                    command: payload.command,
+                    portal_path: payload.portalPath || '',
+                    width: String(payload.width),
+                    height: String(payload.height),
+                }).toString();
+                const respHttp = await fetch(apiUrl(`open-widget-window?${qs}`));
+                if (!respHttp.ok) {
+                    showEditorAlert(`Native pop-out failed: HTTP ${respHttp.status}`);
+                    return false;
+                }
+                const resp = await respHttp.json();
+                if (resp && resp.ok) {
+                    return true;
+                }
+                if (resp && resp.error) {
+                    showEditorAlert(`Native pop-out failed: ${resp.error}`);
+                }
+            } catch (e) {
+                showEditorAlert(`Native pop-out unavailable: ${e && e.message ? e.message : e}`);
+            }
+
+            return false;
+        }
+
+        async function openWidgetPopout(index) {
+            const row = currentWidgetRows[index];
+            if (!row || !row.widget || !row.widget.ok) return;
+
+            const nativeOpened = await tryOpenNativeWidgetWindow(row);
+            if (nativeOpened) return;
+            showEditorAlert('Native pop-out failed. Check server logs and Chrome path setup.');
+        }
+
         function renderWidgets(projects) {
             const el = document.getElementById('widgetList');
 
-            const rows = [];
+            const norm = (v) => String(v == null ? '' : v).trim();
+
+            let rows = [];
             for (const project of (projects || [])) {
                 const widgets = project.widgets || [];
                 for (const widget of widgets) {
@@ -1114,6 +1417,23 @@
                     });
                 }
             }
+
+            if (isWidgetAppMode) {
+                const wantedProject = norm(widgetAppProject);
+                const wantedCommand = norm(widgetAppCommand);
+
+                const exactRows = rows.filter((r) => norm(r.project && r.project.project ? r.project.project : '') === wantedProject
+                    && norm(r.widget && r.widget.name ? r.widget.name : '') === wantedCommand);
+
+                if (exactRows.length > 0) {
+                    rows = exactRows;
+                } else {
+                    const projectRows = rows.filter((r) => norm(r.project && r.project.project ? r.project.project : '') === wantedProject);
+                    rows = projectRows.length > 0 ? [projectRows[0]] : [];
+                }
+            }
+
+            currentWidgetRows = rows;
 
             document.getElementById('widgetCount').textContent = String(rows.length);
 
@@ -1129,15 +1449,15 @@
                 const stripTags = (s) => String(s || '').replace(/<[^>]*>/g, '').trim();
                 const baseTitle = stripTags(project.projectName || '') || project.project || project.projectDir || 'Widget';
                 const widgetName = String(widget.name || 'widget');
-                const title = widgetName === 'load-player-ui'
-                    ? baseTitle
-                    : `${baseTitle} • ${widgetName}`;
+                const title = `${baseTitle} • ${widgetName}`;
 
                 if (!widget.ok) {
                     return `<div class="widget-card">
                         <div class="widget-card-header">
                             <span class="widget-title">${esc(title)}</span>
-                            <span>${esc(project.project || '')}</span>
+                            <span class="widget-header-actions">
+                                <span>${esc(project.project || '')}</span>
+                            </span>
                         </div>
                         <div class="widget-error">${esc(widget.error || 'Failed to load widget')}</div>
                     </div>`;
@@ -1146,7 +1466,10 @@
                 return `<div class="widget-card">
                     <div class="widget-card-header">
                         <span class="widget-title">${esc(title)}</span>
-                        <span>${esc(project.project || '')}</span>
+                        <span class="widget-header-actions">
+                            <span>${esc(project.project || '')}</span>
+                            <button class="widget-pop-btn" type="button" onclick="openWidgetPopout(${idx})" title="Open widget in separate window">Pop-out</button>
+                        </span>
                     </div>
                     <iframe class="widget-frame" sandbox="allow-scripts allow-same-origin" title="${esc(title)}" id="widget-frame-${idx}"${normalizeWidgetHeight(widget.height) ? ` style="height:${normalizeWidgetHeight(widget.height)}"` : ''}></iframe>
                 </div>`;
@@ -1184,6 +1507,36 @@
                 try {
                     source.postMessage({
                         type: 'webdash-widget-response',
+                        requestId,
+                        ...payload,
+                    }, '*');
+                } catch (_) { }
+            };
+
+            try {
+                const result = await runWidgetCommand(data.project, data.command, data.payload);
+                if (!result || !result.ok) {
+                    reply({ ok: false, error: (result && result.error) ? result.error : 'widget command failed' });
+                    return;
+                }
+                reply({ ok: true, data: result.data !== undefined ? result.data : result.content });
+            } catch (e) {
+                reply({ ok: false, error: (e && e.message) ? e.message : String(e) });
+            }
+        });
+
+        window.addEventListener('message', async (event) => {
+            const data = event && event.data;
+            if (!data || data.type !== 'webdash-popup-widget-command') return;
+
+            const requestId = data.requestId;
+            const source = event.source;
+            if (!source || !requestId) return;
+
+            const reply = (payload) => {
+                try {
+                    source.postMessage({
+                        type: 'webdash-popup-widget-response',
                         requestId,
                         ...payload,
                     }, '*');

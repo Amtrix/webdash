@@ -51,6 +51,7 @@ enum class IpcCommand {
     WSL_FORWARDED_PORTS_LIST,
     WRITE_CONFIG,
     WIDGET_COMMAND,
+    OPEN_WIDGET_WINDOW,
 };
 
 
@@ -90,6 +91,7 @@ struct IpcRegistry {
             { IpcCommand::WSL_FORWARDED_PORTS_LIST,"wsl-forwarded-ports-list", true,   "List configured WSL forwarded ports (server-side, no client sudo)" },
             { IpcCommand::WRITE_CONFIG,           "write-config",             true,   "Write a registered webdash.config.json (portal editor)" },
             { IpcCommand::WIDGET_COMMAND,         "widget-command",           true,   "Execute a widget-command and return its output" },
+            { IpcCommand::OPEN_WIDGET_WINDOW,     "open-widget-window",       true,   "Launch a widget in a native app-style browser window" },
         };
         return commands;
     }

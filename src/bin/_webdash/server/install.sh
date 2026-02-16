@@ -3,6 +3,10 @@ mkdir -pv $WEBDASH/app-persistent/bin/_webdash/
 
 TARGET=$WEBDASH/app-persistent/bin/_webdash/webdash-server
 
+# Build latest binary before install
+cmake -S "$MYDIR" -B "$MYDIR/build"
+cmake --build "$MYDIR/build" -j
+
 # Stop the server if it's running (avoids "Text file busy" on cp)
 RESTARTED=false
 if systemctl is-active --quiet webdash-server.service 2>/dev/null; then

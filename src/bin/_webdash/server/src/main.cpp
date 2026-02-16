@@ -76,6 +76,24 @@ static std::vector<std::string> profile_get_string_list(const std::string& key_p
     return result;
 }
 
+static std::optional<int> profile_get_static_file_server_port() {
+    const auto& profile_entries = WebDashCore::Get().GetKeyValuesFromRootProfile();
+    const std::string target_key = std::string(WebDashConst::Internal::kJsonKeyPrefix) +
+                                   ".ports." +
+                                   std::string(WebDashConst::Public::kProfilePortStaticFileServer);
+
+    for (const auto& entry : profile_entries) {
+        if (WebDashUtils::GetWebDashJsonKey(entry) == target_key) {
+            try {
+                int p = std::stoi(entry.GetValue());
+                if (p > 0) return p;
+            } catch (...) {}
+            return std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+
 static bool is_under_root_dir(const fs::path& p, const fs::path& root) {
     try {
         auto pc = fs::weakly_canonical(p);
@@ -324,6 +342,25 @@ static std::string url_decode(const std::string& s) {
             continue;
         }
         out += s[i];
+    }
+    return out;
+}
+
+static std::string url_encode(const std::string& s) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(s.size() * 3);
+    for (unsigned char c : s) {
+        if ((c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') ||
+            c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(hex[(c >> 4) & 0xF]);
+            out.push_back(hex[c & 0xF]);
+        }
     }
     return out;
 }
@@ -1050,6 +1087,73 @@ static std::optional<std::string> open_terminal(
     return msg;
 }
 
+static std::optional<std::string> open_widget_window_native(
+    const std::string& project,
+    const std::string& command,
+    const std::string& portal_path,
+    int width,
+    int height
+) {
+    if (project.empty() || command.empty()) {
+        return std::string("missing project or command");
+    }
+
+    const auto static_port = profile_get_static_file_server_port();
+    if (!static_port.has_value()) {
+        return std::string("static-file-server port is not configured");
+    }
+
+    const int safe_width = std::clamp(width, 320, 4096);
+    const int safe_height = std::clamp(height, 240, 4096);
+
+    std::string page_path = portal_path;
+    if (page_path.empty() || page_path.front() != '/') {
+        page_path = "/src/bin/_webdash/portal-user-interface/index.html";
+    }
+
+    std::string url = "http://localhost:" + std::to_string(static_port.value()) + page_path;
+    url += (url.find('?') == std::string::npos) ? "?" : "&";
+    url += "widget_project=" + url_encode(project);
+    url += "&widget_command=" + url_encode(command);
+
+    const std::string key_editor_user = std::string(WebDashConst::Internal::kJsonKeyPrefix) + ".code.editor.user";
+    std::optional<std::string> username;
+    if (auto u = profile_get_string(key_editor_user); u && !u->empty()) {
+        username = *u;
+    }
+
+    const std::string url_sq = shell_escape_single_quotes(url);
+    const std::string width_s = std::to_string(safe_width);
+    const std::string height_s = std::to_string(safe_height);
+
+    std::string script;
+    script += "set +e; ";
+    script += "winchrome=''; ";
+    script += "for p in '/mnt/c/Program Files/Google/Chrome/Application/chrome.exe' '/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe'; do if [ -x \"$p\" ]; then winchrome=\"$p\"; break; fi; done; ";
+    script += "if [ -n \"$winchrome\" ]; then nohup \"$winchrome\" --new-window --app='" + url_sq + "' --window-size=" + width_s + "," + height_s + " >/dev/null 2>&1 & exit 0; fi; ";
+    script += "if command -v google-chrome >/dev/null 2>&1; then nohup google-chrome --new-window --app='" + url_sq + "' --window-size=" + width_s + "," + height_s + " >/dev/null 2>&1 & exit 0; fi; ";
+    script += "if command -v chromium-browser >/dev/null 2>&1; then nohup chromium-browser --new-window --app='" + url_sq + "' --window-size=" + width_s + "," + height_s + " >/dev/null 2>&1 & exit 0; fi; ";
+    script += "if command -v chromium >/dev/null 2>&1; then nohup chromium --new-window --app='" + url_sq + "' --window-size=" + width_s + "," + height_s + " >/dev/null 2>&1 & exit 0; fi; ";
+    script += "echo 'No supported Chrome/Chromium executable found'; exit 1";
+
+    ScriptRunResult r = run_bash_lc_script_as_user_capture(script, username);
+    if (WIFEXITED(r.status) && WEXITSTATUS(r.status) == 0) {
+        return std::nullopt;
+    }
+
+    std::string msg = "failed to launch native widget window";
+    if (!r.output.empty()) {
+        std::string out = r.output;
+        if (out.size() > 2000) out.resize(2000);
+        while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+        if (!out.empty()) {
+            msg += ": ";
+            msg += out;
+        }
+    }
+    return msg;
+}
+
 // On how to use JSON:
 // https://github.com/nlohmann/json
 
@@ -1377,6 +1481,52 @@ int execute_main()
                     }
 
                     resp = execute_widget_task(suite, widget_project.value(), cmd.value(), payload);
+                    return resp.dump();
+                }
+                if (url_path.rfind("/_api/open-widget-window", 0) == 0) {
+                    json resp;
+                    auto params = parse_query_params(url_path);
+
+                    const std::string project = params.count("project") ? params["project"] : "";
+                    const std::string command = params.count("command") ? params["command"] : "";
+                    const std::string portal_path = params.count("portal_path") ? params["portal_path"] : "";
+
+                    int width = 920;
+                    int height = 680;
+                    try {
+                        if (params.count("width")) width = std::stoi(params["width"]);
+                    } catch (...) {}
+                    try {
+                        if (params.count("height")) height = std::stoi(params["height"]);
+                    } catch (...) {}
+
+                    if (project.empty() || command.empty()) {
+                        resp["ok"] = false;
+                        resp["error"] = "missing project or command parameter";
+                        return resp.dump();
+                    }
+
+                    auto widget_project = find_widget_project(suite, project);
+                    if (!widget_project.has_value()) {
+                        resp["ok"] = false;
+                        resp["error"] = "unknown widget project";
+                        return resp.dump();
+                    }
+
+                    auto ui_cmd = find_widget_command(widget_project.value(), command, "widget");
+                    if (!ui_cmd.has_value()) {
+                        resp["ok"] = false;
+                        resp["error"] = "unknown widget ui command";
+                        return resp.dump();
+                    }
+
+                    auto err = open_widget_window_native(project, command, portal_path, width, height);
+                    if (err.has_value()) {
+                        resp["ok"] = false;
+                        resp["error"] = *err;
+                    } else {
+                        resp["ok"] = true;
+                    }
                     return resp.dump();
                 }
                 if (url_path == "/_api/git-status") {
@@ -1900,6 +2050,56 @@ int execute_main()
             } catch (const std::exception& e) {
                 resp["ok"] = false;
                 resp["error"] = string("parse error: ") + e.what();
+            }
+            reply(resp.dump());
+        });
+
+    // ── OPEN_WIDGET_WINDOW ──────────────────────────────────────────────
+    // Payload JSON: {"project":"...","command":"...","width":920,"height":680}
+    websocket::dispatcher.On(IpcCommand::OPEN_WIDGET_WINDOW,
+        [&suite](const IpcMsgParser::Parsed& msg, IpcDispatcher::IpcResponder reply) {
+            json resp;
+            try {
+                json payload = json::parse(msg.payload);
+                const std::string project = payload.value("project", "");
+                const std::string command = payload.value("command", "");
+                const std::string portal_path = payload.value("portalPath", "");
+                const int width = payload.value("width", 920);
+                const int height = payload.value("height", 680);
+
+                if (project.empty() || command.empty()) {
+                    resp["ok"] = false;
+                    resp["error"] = "missing project or command";
+                    reply(resp.dump());
+                    return;
+                }
+
+                auto widget_project = find_widget_project(suite, project);
+                if (!widget_project.has_value()) {
+                    resp["ok"] = false;
+                    resp["error"] = "unknown widget project";
+                    reply(resp.dump());
+                    return;
+                }
+
+                auto ui_cmd = find_widget_command(widget_project.value(), command, "widget");
+                if (!ui_cmd.has_value()) {
+                    resp["ok"] = false;
+                    resp["error"] = "unknown widget ui command";
+                    reply(resp.dump());
+                    return;
+                }
+
+                auto err = open_widget_window_native(project, command, portal_path, width, height);
+                if (err.has_value()) {
+                    resp["ok"] = false;
+                    resp["error"] = *err;
+                } else {
+                    resp["ok"] = true;
+                }
+            } catch (const std::exception& e) {
+                resp["ok"] = false;
+                resp["error"] = std::string("parse error: ") + e.what();
             }
             reply(resp.dump());
         });
