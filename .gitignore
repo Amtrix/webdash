@@ -11,8 +11,10 @@
 !/src/lib/_webdash/
 
 !/src/bin/_webdash/client/webdash.config.json
+!/webdash-setup/
 !/webdash-setup/setup-webdash.sh
-!/data/WebDash.xml
+!/webdash-setup/webdash-profile.default.json
+!/webdash-setup/WebDash.xml
 !/.gitignore
 
 # Temporary files (logs, caches, test artifacts)

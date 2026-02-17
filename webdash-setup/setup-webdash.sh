@@ -463,19 +463,12 @@ run_test_setup() {
 
     mkdir -p "$test_dir"
 
-    # Get current branch and remote
+    # Get current branch
     local current_branch
     current_branch=$(git -C "$WEBDASH_ROOT" branch --show-current 2>/dev/null || echo "main")
-    local remote_url
-    remote_url=$(git -C "$WEBDASH_ROOT" remote get-url origin 2>/dev/null || echo "")
-
-    if [[ -z "$remote_url" ]]; then
-        log_error "Could not determine git remote URL"
-        exit 1
-    fi
 
     log_info "Current branch: $current_branch"
-    log_info "Remote: $remote_url"
+    log_info "Source repo: $WEBDASH_ROOT"
 
     # Generate patch of uncommitted changes (staged + unstaged, tracked files only)
     log_info "Capturing uncommitted changes..."
@@ -496,9 +489,9 @@ run_test_setup() {
     local untracked_files
     untracked_files=$(git -C "$WEBDASH_ROOT" ls-files --others --exclude-standard 2>/dev/null || true)
 
-    # Clone the repo fresh
-    log_info "Cloning $current_branch into test directory..."
-    if ! git clone --branch "$current_branch" --single-branch "$remote_url" "$test_dir/webdash" 2>&1; then
+    # Clone the local repository state so local commits are included
+    log_info "Cloning local branch $current_branch into test directory..."
+    if ! git clone --branch "$current_branch" --single-branch "$WEBDASH_ROOT" "$test_dir/webdash" 2>&1; then
         log_error "Failed to clone repository"
         rm -f "$patch_file"
         exit 1
