@@ -167,6 +167,10 @@ private:
     // If non-empty, overrides the directory served by the static file server.
     // Variables like $.rootDir() and $.thisDir() are resolved at parse time.
     string _network_shared_sourcedir;
+
+    // Identifier used for config-scoped storage substitutions.
+    // Priority: top-level "widget-identifier" -> config directory name.
+    string _project_identifier;
 };
 
 

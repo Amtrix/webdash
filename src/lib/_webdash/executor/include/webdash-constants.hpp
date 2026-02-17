@@ -100,6 +100,16 @@ namespace Public {
     /// Keyword for current config's directory substitution.
     constexpr char kSubstThisDir[] = "$.thisDir()";
 
+    /// Keyword for config-scoped temporary directory substitution.
+    /// Expands to: <root>/app-temporary/<scope>, where <scope> is derived from
+    ///             src/(bin|static|lib)/<first-child>.
+    constexpr char kSubstWebDashTemporary[] = "$.webdash.temporary()";
+
+    /// Keyword for config-scoped persistent directory substitution.
+    /// Expands to: <root>/app-persistent/<scope>, where <scope> is derived from
+    ///             src/(bin|static|lib)/<first-child>.
+    constexpr char kSubstWebDashPersistent[] = "$.webdash.persistent()";
+
     /// Keyword for command-line arguments substitution.
     constexpr char kSubstArgs[] = "$.args()";
 
@@ -155,6 +165,10 @@ namespace Public {
     /// If true, the project directory is served over HTTP by the static file server.
     /// All files in the config's directory (and subdirectories) become accessible.
     constexpr char kConfigFieldNetworkShared[] = "network-shared";
+
+    /// Optional identifier used for widget/static storage naming.
+    /// Example: "webdash-widget-music-player"
+    constexpr char kConfigFieldWidgetIdentifier[] = "widget-identifier";
 
     /// Optional override for the directory served by the static file server.
     /// If set, this directory is served instead of the config's own directory.

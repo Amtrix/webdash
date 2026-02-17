@@ -42,6 +42,7 @@
             "actions": [
                 ":test-success-dependency",
                 ":test-rootdir-value",
+                ":test-webdash-storage-substitutions",
                 ":test-action-dependency",
                 ":test-heartbeat-log",
                 "webdash :condition-port-pass",
@@ -79,6 +80,16 @@
             "test-case": "webdash.rootDir value is correct ($#.webdash.rootDir).",
             "actions": [
                 "bash -c '[ $#.webdash.rootDir = this ] || exit 1'"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            "name": "test-webdash-storage-substitutions",
+            "silent": true,
+            "test-case": "$.webdash temporary/persistent substitutions resolve correctly.",
+            "actions": [
+                "test \"$.webdash.temporary()\" = \"$.rootDir()/app-temporary/bin/_webdash\"",
+                "test \"$.webdash.persistent()\" = \"$.rootDir()/app-persistent/bin/_webdash\""
             ],
             "wdir": "$.thisDir()"
         },

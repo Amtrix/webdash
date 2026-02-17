@@ -561,6 +561,20 @@ static std::optional<fs::path> sanitize_relative_output_path(const std::string& 
     return rel;
 }
 
+static bool is_under_directory(const fs::path& path_value, const fs::path& root_dir) {
+    std::error_code ec;
+    const fs::path path_canon = fs::weakly_canonical(path_value, ec);
+    if (ec) return false;
+    const fs::path root_canon = fs::weakly_canonical(root_dir, ec);
+    if (ec) return false;
+
+    const auto rel = fs::relative(path_canon, root_canon, ec);
+    if (ec) return false;
+    if (rel.empty()) return false;
+    if (*rel.begin() == "..") return false;
+    return true;
+}
+
 static json execute_widget_task(Suite& suite,
                                 const WidgetProjectDef& project,
                                 const WidgetCommandDef& command,
@@ -577,11 +591,7 @@ static json execute_widget_task(Suite& suite,
         return resp;
     }
 
-    auto rel_output = sanitize_relative_output_path(command.output);
-    if (!rel_output.has_value()) {
-        resp["error"] = "invalid command output path";
-        return resp;
-    }
+    const std::string resolved_output = WebDashUtils::ApplySubstitutions(command.output, reg->config.GetProfileConfigSubtitutions());
 
     std::vector<std::string> extra_args;
     if (command.type == "widget-command") {
@@ -624,7 +634,21 @@ static json execute_widget_task(Suite& suite,
     }
 
     fs::path config_dir = fs::path(project.config_path).parent_path();
-    fs::path source = config_dir / *rel_output;
+    bool output_is_relative = true;
+    fs::path source;
+
+    const fs::path output_candidate = fs::path(resolved_output).lexically_normal();
+    if (output_candidate.is_absolute()) {
+        output_is_relative = false;
+        source = output_candidate;
+    } else {
+        auto rel_output = sanitize_relative_output_path(resolved_output);
+        if (!rel_output.has_value()) {
+            resp["error"] = "invalid command output path";
+            return resp;
+        }
+        source = config_dir / *rel_output;
+    }
 
     std::error_code ec;
     fs::path source_canon = fs::weakly_canonical(source, ec);
@@ -639,10 +663,22 @@ static json execute_widget_task(Suite& suite,
         return resp;
     }
 
-    auto rel_from_cfg = fs::relative(source_canon, config_dir_canon, ec);
-    if (ec || rel_from_cfg.empty() || *rel_from_cfg.begin() == "..") {
-        resp["error"] = "output path escapes project directory";
-        return resp;
+    fs::path rel_from_cfg;
+    if (output_is_relative) {
+        rel_from_cfg = fs::relative(source_canon, config_dir_canon, ec);
+        if (ec || rel_from_cfg.empty() || *rel_from_cfg.begin() == "..") {
+            resp["error"] = "output path escapes project directory";
+            return resp;
+        }
+    } else {
+        const fs::path webdash_root = WebDashCore::Get().GetWebDashRootDirectory();
+        const fs::path allowed_temp = webdash_root / WebDashConst::Public::kTemporaryStorageDir;
+        const fs::path allowed_persistent = webdash_root / WebDashConst::Public::kPersistentStorageDir;
+        if (!is_under_directory(source_canon, allowed_temp) &&
+            !is_under_directory(source_canon, allowed_persistent)) {
+            resp["error"] = "absolute output path must be under app-temporary or app-persistent";
+            return resp;
+        }
     }
 
     if (!fs::exists(source_canon) || !fs::is_regular_file(source_canon)) {
@@ -650,20 +686,25 @@ static json execute_widget_task(Suite& suite,
         return resp;
     }
 
-    fs::path storage_dir = WebDashCore::Get().GetWebDashRootDirectory() /
-                           "app-persistent" / "data" / project.project_dir_name;
-    fs::path persisted_output = storage_dir / rel_from_cfg;
+    fs::path persisted_output;
+    if (output_is_relative) {
+        fs::path storage_dir = WebDashCore::Get().GetWebDashRootDirectory() /
+                               "app-persistent" / "data" / project.project_dir_name;
+        persisted_output = storage_dir / rel_from_cfg;
 
-    fs::create_directories(persisted_output.parent_path(), ec);
-    if (ec) {
-        resp["error"] = "failed to prepare persistent output directory";
-        return resp;
-    }
+        fs::create_directories(persisted_output.parent_path(), ec);
+        if (ec) {
+            resp["error"] = "failed to prepare persistent output directory";
+            return resp;
+        }
 
-    fs::copy_file(source_canon, persisted_output, fs::copy_options::overwrite_existing, ec);
-    if (ec) {
-        resp["error"] = "failed to persist output file";
-        return resp;
+        fs::copy_file(source_canon, persisted_output, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            resp["error"] = "failed to persist output file";
+            return resp;
+        }
+    } else {
+        persisted_output = source_canon;
     }
 
     std::ifstream in(persisted_output, std::ios::in | std::ios::binary);
@@ -677,7 +718,11 @@ static json execute_widget_task(Suite& suite,
     const std::string content = ss.str();
 
     resp["ok"] = true;
-    resp["output"] = rel_from_cfg.generic_string();
+    if (output_is_relative) {
+        resp["output"] = rel_from_cfg.generic_string();
+    } else {
+        resp["output"] = output_candidate.generic_string();
+    }
     resp["persistedPath"] = persisted_output.string();
     resp["content"] = content;
 

@@ -9,11 +9,27 @@
 #include <optional>
 #include <cstdlib>
 #include <set>
+#include <regex>
 #include <nlohmann/json.hpp>
 using namespace std;
 
 
 namespace {
+
+    std::optional<std::string> DeriveStorageScopeFromConfigPath(const std::filesystem::path& config_filepath) {
+        const std::string normalized = config_filepath.lexically_normal().generic_string();
+        static const std::regex pattern(R"((?:^|/)src/(bin|static|lib)/([^/]+)(?:/|$))");
+        std::smatch match;
+        if (std::regex_search(normalized, match, pattern) && match.size() >= 3) {
+            const std::string bucket = match[1].str();
+            const std::string first_child = match[2].str();
+            if (!bucket.empty() && !first_child.empty()) {
+                return bucket + "/" + first_child;
+            }
+        }
+
+        return std::nullopt;
+    }
 
     /**
      * @brief Normalize a path by removing trailing slashes for comparison.
@@ -268,6 +284,11 @@ std::optional<vector<WebDashConfigTask>> WebDashConfig::LoadAndCheckKnownFailure
 vector<WebDashConfigTask> WebDashConfig::Load(const std::filesystem::path config_filepath) {
     vector<WebDashConfigTask> tasks;
 
+    _project_identifier = config_filepath.parent_path().filename().string();
+    if (auto derived_scope = DeriveStorageScopeFromConfigPath(config_filepath); derived_scope.has_value()) {
+        _project_identifier = derived_scope.value();
+    }
+
     ifstream configStream;
     try {
         configStream.open(config_filepath.c_str(), ifstream::in);
@@ -291,6 +312,8 @@ vector<WebDashConfigTask> WebDashConfig::Load(const std::filesystem::path config
     }
 
     WebDash().Log(WebDashType::LogType::DEBUG, "Commands loaded. Available count: " + to_string(json_commands.size()));
+
+    // Scope for $.webdash.* is path-derived from src/(bin|static|lib)/<first-child>.
 
     // Parse network-shared flag (top-level config property)
     // Accepts either a boolean (true → use directory name) or a string (custom alias).
@@ -378,6 +401,13 @@ vector<SubstitutionPair> WebDashConfig::GetProfileConfigSubtitutions() const {
 
     // Substitutions specific to this config file.
     config_substitutions.push_back(make_pair(WebDashConst::Public::kSubstThisDir, WebDashUtils::GetDirectoryOfFilepath(_config_filepath)));
+
+    const auto root = WebDashCore::Get().GetWebDashRootDirectory();
+    std::filesystem::path temp_static = root / WebDashConst::Public::kTemporaryStorageDir / _project_identifier;
+    std::filesystem::path persistent_static = root / WebDashConst::Public::kPersistentStorageDir / _project_identifier;
+
+    config_substitutions.push_back(make_pair(WebDashConst::Public::kSubstWebDashTemporary, temp_static.string()));
+    config_substitutions.push_back(make_pair(WebDashConst::Public::kSubstWebDashPersistent, persistent_static.string()));
 
     return config_substitutions;
 }
