@@ -31,7 +31,7 @@ sudo apt-get install git cmake make libboost-all-dev g++
 ### 2. Run Setup
 
 ```bash
-./data/setup-webdash.sh
+./webdash-setup/setup-webdash.sh
 ```
 
 That's it. The setup script builds WebDash and configures your shell automatically.
@@ -263,7 +263,7 @@ app-persistent/          # Installed binaries and libraries
             webdash.terminal.init.sh  # Source this in ~/.bashrc
 app-temporary/           # Logs and temporary files
     logging/
-data/                    # Setup scripts
+webdash-setup/           # Setup scripts
 src/                     # Source code
     bin/                 # Executables
     lib/                 # Libraries
@@ -520,7 +520,7 @@ The `report-build-state` tool demonstrates the plugin pattern:
 The setup script supports a `--test-setup` flag that creates an isolated test environment:
 
 ```bash
-./data/setup-webdash.sh --test-setup
+./webdash-setup/setup-webdash.sh --test-setup
 ```
 
 This will:

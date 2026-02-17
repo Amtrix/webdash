@@ -16,8 +16,8 @@
 #   - SSH keys configured for GitHub (uses git@github.com URLs)
 #
 # USAGE:
-#   ./data/setup-webdash.sh              # Normal setup
-#   ./data/setup-webdash.sh --test-setup # Sandboxed test run
+#   ./webdash-setup/setup-webdash.sh              # Normal setup
+#   ./webdash-setup/setup-webdash.sh --test-setup # Sandboxed test run
 #
 # AFTER RUNNING:
 #   Add to your ~/.bashrc:
@@ -139,7 +139,7 @@ clone_bootstrap_dependencies() {
 
     if [[ ! -f "$profile" ]]; then
         log_warn "Profile not found, copying default..."
-        cp "$WEBDASH/data/webdash-profile.default.json" "$profile"
+        cp "$WEBDASH/webdash-setup/webdash-profile.default.json" "$profile"
     fi
 
     log_info "Parsing bootstrap dependencies from $PROFILE_FILENAME..."
@@ -301,7 +301,7 @@ main() {
     # -------------------------------------------------------------------------
     if [[ ! -f "$WEBDASH/$PROFILE_FILENAME" ]]; then
         log_info "Creating $PROFILE_FILENAME from default..."
-        cp "$WEBDASH/data/webdash-profile.default.json" "$WEBDASH/$PROFILE_FILENAME"
+        cp "$WEBDASH/webdash-setup/webdash-profile.default.json" "$WEBDASH/$PROFILE_FILENAME"
     else
         log_info "$PROFILE_FILENAME already exists, keeping it"
     fi
@@ -545,7 +545,7 @@ run_test_setup() {
     # Export test mode and run the setup script in the sandbox
     export WEBDASH_TEST_MODE="true"
     cd "$test_dir/webdash"
-    bash "./data/setup-webdash.sh"
+    bash "./webdash-setup/setup-webdash.sh"
 
     local exit_code=$?
 
