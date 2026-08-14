@@ -6,7 +6,8 @@ Python bindings for the WebDash framework, providing access to:
 - **Persistent storage** - Project-specific data storage that survives updates
 - **Temporary storage** - Project-specific temporary files
 - **Logging** - Structured logging with automatic rotation
-- **Profile access** - Read values from webdash-profile.json
+- **Profile access** - Read values from webdash.profile.jsonc
+- **JSONC-aware** - `webdash.config.jsonc`/`webdash.profile.jsonc` may use `//`/`/* */` comments and trailing commas; this binding strips them before parsing, same as the C++ core.
 
 ## Installation
 
@@ -79,7 +80,7 @@ Get the project's temporary storage directory.
 Returns: `<root>/app-temporary/<project_name>/`
 
 #### `webdash.get_profile_value(key_path: str) -> Optional[str]`
-Get a value from webdash-profile.json by dot-separated key path.
+Get a value from webdash.profile.jsonc by dot-separated key path.
 
 ### Storage Class
 
@@ -142,7 +143,7 @@ Files are automatically rotated when they exceed 10 MB.
 
 ```
 <webdash-root>/
-├── webdash-profile.json          # Root marker file
+├── webdash.profile.jsonc          # Root marker file
 ├── app-persistent/
 │   └── data/
 │       └── <project-name>/       # Persistent storage

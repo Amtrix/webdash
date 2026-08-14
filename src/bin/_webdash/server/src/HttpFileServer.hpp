@@ -4,7 +4,7 @@
  * HttpFileServer - Lightweight HTTP static file server for WebDash.
  *
  * Serves files from registered project directories that have "network-shared": true
- * in their webdash.config.json. Each project is accessible under its directory name:
+ * in their webdash.config.jsonc. Each project is accessible under its directory name:
  *
  *   http://127.0.0.1:<port>/<project-name>/path/to/file
  *   http://<host-ip>:<port>/<project-name>/path/to/file
@@ -72,9 +72,14 @@ private:
      * @brief Resolve a URL path to a local file path.
      * @param url_path The URL path (e.g., "/wallpaper-engine-dashboard/config/config.json").
      * @param out_filepath Output: the resolved local file path.
+     * @param needs_slash_redirect Output: true if `url_path` refers to a directory
+     *        (served via its index.html) but doesn't end in '/'. When true, the
+     *        caller should redirect to `url_path + "/"` instead of serving the file
+     *        directly - otherwise the browser resolves the page's own relative
+     *        asset links (e.g. `href="styles.css"`) against the wrong base path.
      * @returns true if the path resolved to a valid, accessible file.
      */
-    bool ResolvePath(const std::string& url_path, std::string& out_filepath);
+    bool ResolvePath(const std::string& url_path, std::string& out_filepath, bool& needs_slash_redirect);
 
     /**
      * @brief Get the MIME type for a file extension.

@@ -373,7 +373,7 @@ void WebDashRegister(string configPath, const string& runAsUser = "")
     }
 
     // Fire-and-forget: register does not wait for a response.
-    endpoint.send(id, IpcMsgBuilder::FireAndForget(IpcCommand::REGISTER, payload));
+    endpoint.send(id, IpcMsgBuilder::FireAndForget(IpcCommand::CONFIG_REGISTER, payload));
 }
 
 
@@ -382,7 +382,7 @@ void WebDashUnRegister(string configPath)
     websocket_endpoint endpoint;
     int id = ConnectEndpoint(&endpoint);
 
-    const auto& info = IpcRegistry::Get(IpcCommand::UNREGISTER);
+    const auto& info = IpcRegistry::Get(IpcCommand::CONFIG_UNREGISTER);
     endpoint.sendAndWaitForResponse(id, info.wire, configPath,
         [&](__attribute__((unused)) string resp) {
             cout << "Success: Config was removed from automatic management." << endl;

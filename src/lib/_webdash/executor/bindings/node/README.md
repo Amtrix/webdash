@@ -7,6 +7,7 @@ N-API bindings that expose WebDash framework functionality to Node.js applicatio
 - **Logging** - Use WebDash's unified logging system (logs to `app-temporary/logging/<project>/`)
 - **Root Directory** - Access the WebDash root directory path
 - **Cross-platform** - Works on Linux and Windows
+- **JSONC-aware** - `webdash.config.jsonc`/`webdash.profile.jsonc` may use `//`/`/* */` comments and trailing commas; this binding strips them before parsing, same as the C++ core.
 
 ## Installation
 
@@ -61,7 +62,7 @@ All methods accept an optional `meta` object that gets JSON-stringified and appe
 
 ### `webdash.getRootDirectory()`
 
-Returns the WebDash root directory path (where `webdash-profile.json` lives).
+Returns the WebDash root directory path (where `webdash.profile.jsonc` lives).
 
 ### `webdash.getProjectName()`
 
@@ -69,7 +70,7 @@ Returns the current project name used for logging.
 
 ### `webdash.getProfileValue(keyPath)`
 
-Get a value from `webdash-profile.json` by dot-separated key path.
+Get a value from `webdash.profile.jsonc` by dot-separated key path.
 
 ```javascript
 webdash.getProfileValue('ports.my-service')  // "8765"
@@ -88,16 +89,16 @@ webdash.getPort('nonexistent', 3000)                    // 3000 (default)
 
 ### `webdash.resolveConfigValue(keyPath, [options])`
 
-Resolve a config value by traversing up the directory tree. This checks `webdash.config.json` files in the current directory and parents, then falls back to `webdash-profile.json`.
+Resolve a config value by traversing up the directory tree. This checks `webdash.config.jsonc` files in the current directory and parents, then falls back to `webdash.profile.jsonc`.
 
 **Lookup order:**
-1. `webdash.config.json` in startDir
-2. `webdash.config.json` in parent directories (up to WebDash root)
-3. `webdash-profile.json` at WebDash root
+1. `webdash.config.jsonc` in startDir
+2. `webdash.config.jsonc` in parent directories (up to WebDash root)
+3. `webdash.profile.jsonc` at WebDash root
 
 **Options:**
 - `startDir` - Directory to start searching from (default: `process.cwd()`)
-- `skipLocal` - Skip `webdash.config.json` files, only check profile
+- `skipLocal` - Skip `webdash.config.jsonc` files, only check profile
 
 ```javascript
 // From current directory
@@ -106,7 +107,7 @@ webdash.resolveConfigValue('ports.my-service')
 // Start from a specific directory
 webdash.resolveConfigValue('mycommands.build', { startDir: '/path/to/project' })
 
-// Only check webdash-profile.json
+// Only check webdash.profile.jsonc
 webdash.resolveConfigValue('env.WEBDASH', { skipLocal: true })
 ```
 

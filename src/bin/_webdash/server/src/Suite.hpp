@@ -33,7 +33,7 @@ struct RegisteredConfig {
  */
 struct ActionLogEntry {
     std::string timestamp;      ///< ISO-8601 local time.
-    std::string config_path;    ///< Path of the webdash.config.json.
+    std::string config_path;    ///< Path of the webdash.config.jsonc.
     std::string task_name;      ///< Name of the task that ran.
     int         return_code;    ///< Exit code (0 = success).
 };

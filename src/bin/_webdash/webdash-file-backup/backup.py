@@ -6,27 +6,78 @@ Selectively backup files and directories that shouldn't be in git
 (credentials, tokens, local configs, etc.)
 
 Config source:
-    - webdash-profile.json "backup" section
+    - webdash.profile.jsonc "backup" section
 """
 
 import argparse
 import filecmp
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from datetime import datetime
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROFILE_FILENAME = "webdash-profile.json"
+PROFILE_FILENAME = "webdash.profile.jsonc"
 
 # Default webdash root (3 levels up from src/static/webdash-file-backup)
 WEBDASH_ROOT = os.environ.get("WEBDASH") or os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
 
 
+def _strip_jsonc(text):
+    """
+    Strip JSONC-only syntax ("//" line comments, "/* */" block comments,
+    trailing commas) so the result can be parsed by the standard `json`
+    module. Respects string literals (a "//"/"/*" inside a quoted string,
+    e.g. a "https://" URL, is left untouched). Mirrors the C++ core's native
+    nlohmann/json ignore_comments/ignore_trailing_commas support.
+    """
+    result = []
+    i = 0
+    n = len(text)
+    in_string = False
+    escape = False
+
+    while i < n:
+        c = text[i]
+
+        if in_string:
+            result.append(c)
+            if escape:
+                escape = False
+            elif c == '\\':
+                escape = True
+            elif c == '"':
+                in_string = False
+            i += 1
+            continue
+
+        if c == '"':
+            in_string = True
+            result.append(c)
+            i += 1
+            continue
+
+        if c == '/' and i + 1 < n and text[i + 1] == '/':
+            j = text.find('\n', i)
+            i = n if j == -1 else j
+            continue
+
+        if c == '/' and i + 1 < n and text[i + 1] == '*':
+            j = text.find('*/', i + 2)
+            i = n if j == -1 else j + 2
+            continue
+
+        result.append(c)
+        i += 1
+
+    return re.sub(r',(\s*[}\]])', r'\1', ''.join(result))
+
+
 def load_config_from_profile():
-    """Load backup configuration from webdash-profile.json's 'backup' section."""
+    """Load backup configuration from webdash.profile.jsonc's 'backup' section."""
     profile_path = os.path.join(WEBDASH_ROOT, PROFILE_FILENAME)
 
     if not os.path.exists(profile_path):
@@ -34,7 +85,7 @@ def load_config_from_profile():
         sys.exit(1)
 
     with open(profile_path, 'r') as f:
-        profile = json.load(f)
+        profile = json.loads(_strip_jsonc(f.read()))
 
     backup_section = profile.get("backup")
     if not backup_section:
@@ -342,7 +393,7 @@ def main():
     parser.add_argument('--dry-run', action='store_true',
                         help='Show what would be done without doing it')
     # Backward compatibility: older webdash clients pass --from-profile.
-    # This tool now always reads from webdash-profile.json; the flag is ignored.
+    # This tool now always reads from webdash.profile.jsonc; the flag is ignored.
     parser.add_argument('--from-profile', action='store_true',
                         help=argparse.SUPPRESS)
     args = parser.parse_args()

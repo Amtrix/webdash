@@ -1,50 +1,42 @@
 #!/bin/bash
 #
-# WebDash Setup Script
-# ====================
+# WebDash setup
+# =============
 #
-# PURPOSE:
-#   Bootstrap a fresh WebDash development environment by:
-#   1. Cloning required dependencies (external libraries, server, etc.)
-#   2. Building the core WebDash library (webdash-executor)
-#   3. Building and installing the WebDash CLI client
-#   4. Setting up the WebDash server as a systemd service
-#   5. Generating shell initialization scripts
+# Bootstraps a fresh WebDash environment:
+#   1. Clone external dependencies (libraries, server, etc.)
+#   2. Build the core executor library
+#   3. Build and install the `webdash` CLI client
+#   4. Build and install the server (systemd, skipped in test mode)
+#   5. Generate and wire up the shell init script
 #
-# PREREQUISITES:
-#   - git, cmake, make, g++ (>= 9), libboost-all-dev
-#   - SSH keys configured for GitHub (uses git@github.com URLs)
+# Requirements: git, cmake, make, g++ (>= 9), libboost-all-dev, and an SSH key
+# configured for GitHub (clones use git@github.com URLs).
 #
-# USAGE:
-#   ./webdash-setup/setup-webdash.sh              # Normal setup
-#   ./webdash-setup/setup-webdash.sh --test-setup # Sandboxed test run
-#
-# AFTER RUNNING:
-#   Add to your ~/.bashrc:
-#     export WEBDASH="/path/to/webdash"
-#     source "$WEBDASH/app-persistent/data/webdash-client/webdash.terminal.init.sh"
+# Usage:
+#   ./install.sh                                    # Normal setup
+#   ./install.sh --test-setup                       # Sandboxed test run
+#   ./.webdash-setup/setup-webdash.sh               # Normal setup (direct)
+#   ./.webdash-setup/setup-webdash.sh --test-setup  # Sandboxed test run (direct)
 #
 
-set -euo pipefail  # Exit on error, undefined vars, and pipe failures
+set -euo pipefail  # exit on error, undefined vars, and pipe failures
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 
-# Test mode flag - when true, skip system modifications
+# When true, skip system modifications (bashrc, systemd).
 WEBDASH_TEST_MODE="${WEBDASH_TEST_MODE:-false}"
 
-# Resolve script location and WebDash root directory.
-# Why: We need absolute paths that work regardless of where the script is called from.
+# Absolute paths so the script works from any working directory.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 WEBDASH_ROOT="$(realpath "$SCRIPT_DIR/..")"
 
-# C++ header that defines canonical constants (single source of truth).
+# The C++ header is the single source of truth for canonical filenames.
 CPP_CONSTANTS_HEADER="$WEBDASH_ROOT/src/lib/_webdash/executor/include/webdash-constants.hpp"
 
-# Extract canonical filenames from C++ header to avoid duplication.
-# Why: The C++ library is the source of truth for these constants.
-#      By reading from the header, we ensure bash and C++ stay in sync.
+# Read a constant from the C++ header so bash and C++ never drift apart.
 extract_cpp_constant() {
     local var_name="$1"
     grep -oP "${var_name}\\[\\] = \"\\K[^\"]+" "$CPP_CONSTANTS_HEADER" || {
@@ -57,8 +49,7 @@ extract_cpp_constant() {
 PROFILE_FILENAME=""
 TERMINAL_INIT_FILENAME=""
 
-# Export for child processes and builds.
-# Why: CMake and other build tools read WEBDASH to locate dependencies.
+# CMake and other build tools read WEBDASH to locate dependencies.
 export WEBDASH="$WEBDASH_ROOT"
 export PATH="$WEBDASH/app-persistent/bin:$PATH"
 
@@ -92,8 +83,7 @@ require_command() {
     fi
 }
 
-# Build a CMake project
-# Why: Centralizes build logic and error handling in one place.
+# Build a CMake project (centralizes build + error handling).
 build_cmake_project() {
     local project_dir="$1"
     local project_name="$2"
@@ -130,16 +120,28 @@ build_cmake_project() {
 # BOOTSTRAP DEPENDENCIES
 # =============================================================================
 
-# Clone bootstrap dependencies by parsing webdash-profile.json directly.
+# Clone bootstrap dependencies by parsing webdash.profile.jsonc directly.
 # These must be cloned BEFORE webdash can be built (chicken-and-egg problem).
-# Uses jq if available, otherwise falls back to grep/sed parsing.
+
+# Strips JSONC comments from a file before line-based parsing: full-line "//"
+# comments and "/* ... */" block comments (which may span multiple lines).
+# Deliberately does NOT strip a trailing "// comment" that follows real
+# content on the same line - the field-extraction below only captures text
+# between quotes, so a trailing comment after a value's closing quote/comma
+# doesn't affect it anyway, and this avoids ever having to distinguish a real
+# comment from "//" inside a value (e.g. a "https://" URL in a "git" field).
+strip_jsonc_comments() {
+    local input_file="$1"
+    sed -e ':a' -e 'N' -e '$!ba' -e 's#/\*[^*]*\*\+\([^/*][^*]*\*\+\)*/##g' "$input_file" \
+        | grep -v '^[[:space:]]*//'
+}
 
 clone_bootstrap_dependencies() {
     local profile="$WEBDASH/$PROFILE_FILENAME"
 
     if [[ ! -f "$profile" ]]; then
         log_warn "Profile not found, copying default..."
-        cp "$WEBDASH/webdash-setup/webdash-profile.default.json" "$profile"
+        cp "$WEBDASH/.webdash-setup/webdash.profile.default.jsonc" "$profile"
     fi
 
     log_info "Parsing bootstrap dependencies from $PROFILE_FILENAME..."
@@ -189,7 +191,7 @@ clone_bootstrap_dependencies() {
                 current_branch=$(echo "$line" | sed -n 's/.*"branch"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
             fi
         fi
-    done < "$profile"
+    done < <(strip_jsonc_comments "$profile")
 }
 
 clone_single_repo() {
@@ -230,7 +232,7 @@ main() {
     if [[ ! -f "$CPP_CONSTANTS_HEADER" ]]; then
         # Fallback if header doesn't exist yet (first-time setup before clone)
         log_warn "C++ constants header not found, using hardcoded defaults"
-        PROFILE_FILENAME="webdash-profile.json"
+        PROFILE_FILENAME="webdash.profile.jsonc"
         TERMINAL_INIT_FILENAME="webdash.terminal.init.sh"
     else
         PROFILE_FILENAME=$(extract_cpp_constant "kRootProfileFilename")
@@ -240,51 +242,33 @@ main() {
         log_info "  TERMINAL_INIT_FILENAME=$TERMINAL_INIT_FILENAME"
     fi
 
-    log_warn "This setup may erase and re-clone directories listed above."
+    log_warn "This setup may erase and re-clone the directories listed above."
     log_info "WebDash root: $WEBDASH"
     echo ""
 
-    # -------------------------------------------------------------------------
-    # Step 0: Verify prerequisites
-    # -------------------------------------------------------------------------
+    # Step 0: Verify prerequisites.
     log_info "Checking prerequisites..."
     require_command git
     require_command cmake
     require_command make
     require_command g++
 
-    # -------------------------------------------------------------------------
-    # Step 1: Create directory structure
-    # Why: WebDash enforces a specific layout for consistency across projects
-    # -------------------------------------------------------------------------
+    # Step 1: Create the standard directory layout.
     log_info "Creating directory structure..."
 
-    mkdir -p "$WEBDASH/app-temporary"        # Logs, caches, temp files (gitignored)
-    mkdir -p "$WEBDASH/app-persistent/bin"   # Compiled binaries
-    mkdir -p "$WEBDASH/app-persistent/lib"   # Compiled libraries
-    mkdir -p "$WEBDASH/app-persistent/data"  # Persistent app data
+    mkdir -p "$WEBDASH/app-temporary"        # logs, caches, temp files (gitignored)
+    mkdir -p "$WEBDASH/app-persistent/bin"   # compiled binaries
+    mkdir -p "$WEBDASH/app-persistent/lib"   # compiled libraries
+    mkdir -p "$WEBDASH/app-persistent/data"  # persistent app data
 
-    # -------------------------------------------------------------------------
-    # Step 2: Clone bootstrap dependencies
-    # Why: External libraries (json, websocketpp) must be cloned before
-    #      we can build webdash-executor. After webdash is built, it can
-    #      auto-clone modules defined in the profile.
-    # -------------------------------------------------------------------------
+    # Step 2: Clone external libraries needed to build the executor.
+    # (Once webdash is built it can auto-clone modules from the profile.)
     clone_bootstrap_dependencies
 
-    # -------------------------------------------------------------------------
-    # Step 3: Build WebDash Executor Library
-    # Why: This is the core library that both client and server depend on.
-    #      It provides config parsing, path resolution, logging, etc.
-    #      MUST be built before the client.
-    # -------------------------------------------------------------------------
+    # Step 3: Build the core executor library (client and server depend on it).
     build_cmake_project "$WEBDASH/src/lib/_webdash/executor" "WebDash Executor Library"
 
-    # -------------------------------------------------------------------------
-    # Step 4: Build and Install WebDash Client
-    # Why: The 'webdash' CLI binary that users interact with.
-    #      Links against the executor library built above.
-    # -------------------------------------------------------------------------
+    # Step 4: Build and install the `webdash` CLI client.
     build_cmake_project "$WEBDASH/src/bin/_webdash/client" "WebDash Client"
 
     log_info "Installing WebDash client to app-persistent/bin..."
@@ -294,32 +278,20 @@ main() {
     popd > /dev/null
     log_success "WebDash client installed"
 
-    # -------------------------------------------------------------------------
-    # Step 5: Initialize profile configuration
-    # Why: The $PROFILE_FILENAME defines environment, paths, and projects.
-    #      We copy a default if none exists (-n = no clobber).
-    # -------------------------------------------------------------------------
+    # Step 5: Create the profile from the default if one doesn't exist yet.
     if [[ ! -f "$WEBDASH/$PROFILE_FILENAME" ]]; then
         log_info "Creating $PROFILE_FILENAME from default..."
-        cp "$WEBDASH/webdash-setup/webdash-profile.default.json" "$WEBDASH/$PROFILE_FILENAME"
+        cp "$WEBDASH/.webdash-setup/webdash.profile.default.jsonc" "$WEBDASH/$PROFILE_FILENAME"
     else
         log_info "$PROFILE_FILENAME already exists, keeping it"
     fi
 
-    # -------------------------------------------------------------------------
-    # Step 6: Generate shell initialization script
-    # Why: Users source this in their shell to get:
-    #      - WEBDASH environment variable
-    #      - PATH updated with WebDash binaries
-    #      - Any custom env vars from $PROFILE_FILENAME
-    #
-    # The webdash client generates the init file directly.
-    # -------------------------------------------------------------------------
+    # Step 6: Generate the shell init script (sets WEBDASH, PATH, and profile
+    # env vars). The webdash client writes the file itself.
     log_info "Generating shell initialization script..."
 
     local TERMINAL_INIT_PATH="app-persistent/data/webdash-client/$TERMINAL_INIT_FILENAME"
 
-    # Run the webdash client to generate the init file
     if ! "$WEBDASH/app-persistent/bin/webdash" _internal_:create-build-init; then
         log_error "Failed to generate shell init script"
         exit 1
@@ -327,13 +299,8 @@ main() {
 
     log_success "Shell init script created: \$WEBDASH/$TERMINAL_INIT_PATH"
 
-    # -------------------------------------------------------------------------
-    # Step 7: Build and start WebDash Server
-    # Why: The server runs as a background service (systemd) and:
-    #      - Tracks all registered webdash.config.json files
-    #      - Can run scheduled tasks (daily builds, etc.)
-    #      - Provides a central point for config discovery
-    # -------------------------------------------------------------------------
+    # Step 7: Build the server. It tracks registered configs and runs scheduled
+    # tasks. In test mode we only build it; otherwise we install it via systemd.
     if [[ "$WEBDASH_TEST_MODE" == "true" ]]; then
         log_info "[TEST MODE] Building WebDash Server (skipping install/systemd)..."
         if ! "$WEBDASH/app-persistent/bin/webdash" "$WEBDASH/src/bin/_webdash/server:build"; then
@@ -358,11 +325,7 @@ main() {
         fi
     fi
 
-    # -------------------------------------------------------------------------
-    # Step 8: Clone and register projects from profile
-    # Why: $PROFILE_FILENAME can specify external projects to clone.
-    #      This step fetches them and registers their configs with the server.
-    # -------------------------------------------------------------------------
+    # Step 8: Clone and register projects declared in the profile.
     log_info "Processing projects from $PROFILE_FILENAME..."
 
     # Generate the clone script from profile
@@ -538,7 +501,7 @@ run_test_setup() {
     # Export test mode and run the setup script in the sandbox
     export WEBDASH_TEST_MODE="true"
     cd "$test_dir/webdash"
-    bash "./webdash-setup/setup-webdash.sh"
+    bash "./install.sh"
 
     local exit_code=$?
 

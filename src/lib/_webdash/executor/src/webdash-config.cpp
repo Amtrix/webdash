@@ -44,7 +44,7 @@ namespace {
 
     /**
      * @brief Check if path_a is a prefix of or equal to path_b (for module matching).
-     *        Handles paths like "/foo/bar" matching "/foo/bar/webdash.config.json"
+     *        Handles paths like "/foo/bar" matching "/foo/bar/webdash.config.jsonc"
      */
     bool PathMatchesModule(const string& module_path, const string& dependency_path) {
         string norm_module = NormalizePath(module_path);
@@ -89,17 +89,17 @@ namespace {
 
     /**
      * @brief Try to auto-clone a module if the path doesn't exist.
-     *        Searches the "modules" array in webdash-profile.json for a matching path.
+     *        Searches the "modules" array in webdash.profile.jsonc for a matching path.
      * @param path The path that doesn't exist.
      * @returns true if successfully cloned, false otherwise.
      */
     bool TryAutoCloneModule(const std::filesystem::path& path) {
         // Check if the path already has valid content:
         // - If it's a file, it exists
-        // - If it's a directory, it must contain webdash.config.json
+        // - If it's a directory, it must contain webdash.config.jsonc
         if (std::filesystem::exists(path)) {
             if (std::filesystem::is_directory(path)) {
-                // Directory exists - check if it has webdash.config.json
+                // Directory exists - check if it has webdash.config.jsonc
                 auto config_path = path / WebDashConst::Public::kProjectConfigFilename;
                 if (std::filesystem::exists(config_path)) {
                     return true;  // Already cloned and has config
@@ -121,7 +121,7 @@ namespace {
             }
 
             if (PathMatchesModule(module.destination, path_str)) {
-                // Check if the module destination already has a valid webdash.config.json
+                // Check if the module destination already has a valid webdash.config.jsonc
                 // If so, don't try to clone - the module is already set up, we just need
                 // to access a subdirectory that may not exist yet
                 std::filesystem::path dest_config = std::filesystem::path(module.destination) / WebDashConst::Public::kProjectConfigFilename;
@@ -299,7 +299,11 @@ vector<WebDashConfigTask> WebDashConfig::Load(const std::filesystem::path config
 
     json json_config;
     try {
-        configStream >> json_config;
+        // Accept JSONC: "//" and "/* */" comments plus trailing commas, in
+        // addition to plain JSON. Supported natively by nlohmann/json (no
+        // extra dependency) via the ignore_comments/ignore_trailing_commas
+        // parse flags.
+        json_config = json::parse(configStream, nullptr, true, true, true);
     } catch (...) {
         throw WebDashException::ConfigJsonParseError("Unable to parse as JSON. Format error?");
     }
@@ -314,6 +318,95 @@ vector<WebDashConfigTask> WebDashConfig::Load(const std::filesystem::path config
     WebDash().Log(WebDashType::LogType::DEBUG, "Commands loaded. Available count: " + to_string(json_commands.size()));
 
     // Scope for $.webdash.* is path-derived from src/(bin|static|lib)/<first-child>.
+
+    // Parse top-level "vars": named constants referenced as $.var(name) from
+    // this config's own actions/wdir/dependencies. Values may use
+    // $.rootDir(), $.thisDir(), $.webdash.*(), $.port(), and $.env() -
+    // resolved once here (vars can't reference other vars, to avoid ordering
+    // issues/cycles).
+    //
+    // $.var(name) also checks the profile's own top-level "vars" section
+    // (same mechanism the profile already offers for "ports" - a value
+    // defined once, usable from every project) - so a var doesn't have to be
+    // copy-pasted into every config that needs it. If the same name is
+    // defined in both, this config's own value wins.
+    _local_vars.clear();
+    {
+        auto base_substitutions = GetProfileConfigSubtitutions();
+        const auto& profile_entries = WebDashCore::Get().GetKeyValuesFromRootProfile();
+        std::set<string> config_defined_names;
+
+        if (json_config.contains("vars")) {
+            if (!json_config["vars"].is_object()) {
+                WebDash().Log(WebDashType::LogType::ERR,
+                    "Config '" + config_filepath.string() + "': top-level [vars] must be an object, but found " +
+                    string(json_config["vars"].type_name()) + ". Ignored.");
+            } else {
+                for (auto it = json_config["vars"].begin(); it != json_config["vars"].end(); ++it) {
+                    if (!it.value().is_string()) {
+                        WebDash().Log(WebDashType::LogType::ERR,
+                            "Config '" + config_filepath.string() + "': vars[" + it.key() + "] must be a string, but found " +
+                            string(it.value().type_name()) + ". Ignored.");
+                        continue;
+                    }
+
+                    string resolved = it.value().get<std::string>();
+                    resolved = WebDashUtils::ApplySubstitutions(resolved, base_substitutions);
+                    resolved = WebDashUtils::ResolvePortReferences(resolved, profile_entries);
+                    resolved = WebDashUtils::ResolveEnvReferences(resolved);
+
+                    _local_vars.push_back({"$.var(" + it.key() + ")", resolved});
+                    config_defined_names.insert(it.key());
+                }
+            }
+        }
+
+        // Profile-level vars: any "vars.<name>" entry in webdash.profile.jsonc,
+        // skipping names this config already defines itself.
+        for (const auto& entry : profile_entries) {
+            const auto& tokens = entry.GetTokens();
+            if (tokens.size() != 2 || tokens[0] != "vars") continue;
+            if (config_defined_names.count(tokens[1])) continue;
+
+            string resolved = WebDashUtils::ApplySubstitutions(entry.GetValue(), base_substitutions);
+            resolved = WebDashUtils::ResolvePortReferences(resolved, profile_entries);
+            resolved = WebDashUtils::ResolveEnvReferences(resolved);
+
+            _local_vars.push_back({"$.var(" + tokens[1] + ")", resolved});
+        }
+    }
+
+    // Parse top-level "env": real environment variables exported (via
+    // setenv()) for any process that runs one of this config's tasks - the
+    // same mechanism as the profile's "env", just scoped to this config
+    // instead of baked into the shell init script.
+    _config_env.clear();
+    if (json_config.contains("env")) {
+        if (!json_config["env"].is_object()) {
+            WebDash().Log(WebDashType::LogType::ERR,
+                "Config '" + config_filepath.string() + "': top-level [env] must be an object, but found " +
+                string(json_config["env"].type_name()) + ". Ignored.");
+        } else {
+            auto base_substitutions = GetProfileConfigSubtitutions();
+            const auto& profile_entries = WebDashCore::Get().GetKeyValuesFromRootProfile();
+
+            for (auto it = json_config["env"].begin(); it != json_config["env"].end(); ++it) {
+                if (!it.value().is_string()) {
+                    WebDash().Log(WebDashType::LogType::ERR,
+                        "Config '" + config_filepath.string() + "': env[" + it.key() + "] must be a string, but found " +
+                        string(it.value().type_name()) + ". Ignored.");
+                    continue;
+                }
+
+                string resolved = it.value().get<std::string>();
+                resolved = WebDashUtils::ApplySubstitutions(resolved, base_substitutions);
+                resolved = WebDashUtils::ResolvePortReferences(resolved, profile_entries);
+                resolved = WebDashUtils::ResolveEnvReferences(resolved);
+
+                _config_env.push_back({it.key(), resolved});
+            }
+        }
+    }
 
     // Parse network-shared flag (top-level config property)
     // Accepts either a boolean (true → use directory name) or a string (custom alias).
@@ -354,10 +447,34 @@ vector<WebDashConfigTask> WebDashConfig::Load(const std::filesystem::path config
         // No top-level dependencies, that's fine
     }
 
+    // Parse top-level defaults (field values applied to every command that
+    // doesn't already define that same field itself). Keeps repetitive fields
+    // like "user" or "wdir" from having to be copy-pasted onto every command.
+    json top_level_defaults;
+    try {
+        top_level_defaults = json_config["defaults"];
+    } catch (...) {
+        // No top-level defaults, that's fine
+    }
+
     int command_index = 0;
 
     for (auto json_command : json_commands) {
         try {
+            // Apply config-level defaults for any field the command doesn't
+            // already set itself. "name" and "dependencies" are excluded:
+            // names must be unique per-command, and dependencies are merged
+            // additively above/below rather than defaulted.
+            if (!top_level_defaults.is_null() && top_level_defaults.is_object()) {
+                for (auto it = top_level_defaults.begin(); it != top_level_defaults.end(); ++it) {
+                    const string& key = it.key();
+                    if (key == "name" || key == "dependencies") continue;
+                    if (!json_command.contains(key)) {
+                        json_command[key] = it.value();
+                    }
+                }
+            }
+
             // Merge top-level dependencies into command if they exist
             if (!top_level_deps.is_null() && top_level_deps.is_array()) {
                 if (!json_command.contains("dependencies")) {
@@ -408,6 +525,8 @@ vector<SubstitutionPair> WebDashConfig::GetProfileConfigSubtitutions() const {
 
     config_substitutions.push_back(make_pair(WebDashConst::Public::kSubstWebDashTemporary, temp_static.string()));
     config_substitutions.push_back(make_pair(WebDashConst::Public::kSubstWebDashPersistent, persistent_static.string()));
+
+    config_substitutions.insert(config_substitutions.end(), _local_vars.begin(), _local_vars.end());
 
     return config_substitutions;
 }
@@ -460,14 +579,14 @@ std::vector<WebDashType::RunReturn> WebDashConfig::Run(const string command_name
     //
     //      <task_name>
     //      :<task_name>
-    //      webdash.config.json:blabla
-    //          Executes a task specified in the current directory's webdash.config.json.
+    //      webdash.config.jsonc:blabla
+    //          Executes a task specified in the current directory's webdash.config.jsonc.
     //
-    //      $.thisDir()/relative-from-thisDir()/webdash.config.json:blabla
+    //      $.thisDir()/relative-from-thisDir()/webdash.config.jsonc:blabla
     //      $.thisDir()/relative-from-thisDir()/:blabla
     //          Specified in the config file of a directory.
     //
-    //      ./path-relative-to-webdash-root/x/y/z/webdash.config.json:blabla
+    //      ./path-relative-to-webdash-root/x/y/z/webdash.config.jsonc:blabla
     //      ./path-relative-to-webdash-root/x/y/z/:blabla
     //
     runconfig.TaskRetriever = [&](const string webdash_command_arg) -> optional<WebDashConfigTask> {
@@ -516,7 +635,7 @@ inline std::optional<WebDashConfig> GetBestMatchingConfig(const std::filesystem:
     if (!std::filesystem::exists(path)) {
         TryAutoCloneModule(path);
     }
-    // If the path exists but is a directory without webdash.config.json, also try to clone
+    // If the path exists but is a directory without webdash.config.jsonc, also try to clone
     else if (std::filesystem::is_directory(path)) {
         auto config_path = path / WebDashConst::Public::kProjectConfigFilename;
         if (!std::filesystem::exists(config_path)) {
@@ -627,7 +746,7 @@ std::optional<ConfigAndCommand> GetConfigAndCommand(const vector<string>& argume
     }
 
     /**
-     * Case 1.2) Equivalent to case 1.1) but also looks for the `webdash.config.json` file in the ancestry of the
+     * Case 1.2) Equivalent to case 1.1) but also looks for the `webdash.config.jsonc` file in the ancestry of the
      *           current directory.
      */
 

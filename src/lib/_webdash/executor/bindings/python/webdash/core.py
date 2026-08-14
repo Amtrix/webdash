@@ -7,14 +7,15 @@ ensuring consistent behavior across all language bindings.
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Optional, Any
 from functools import lru_cache
 
 
 # Constants matching webdash-constants.hpp
-PROFILE_FILENAME = "webdash-profile.json"
-CONFIG_FILENAME = "webdash.config.json"
+PROFILE_FILENAME = "webdash.profile.jsonc"
+CONFIG_FILENAME = "webdash.config.jsonc"
 PERSISTENT_STORAGE_DIR = "app-persistent"
 TEMPORARY_STORAGE_DIR = "app-temporary"
 DATA_SUBDIR = "data"
@@ -24,6 +25,64 @@ ENV_VAR_NAME = "WEBDASH"
 # Magic key/value for root validation (from WebDashConst::Internal)
 MAGIC_PROFILE_KEY = "webdash.rootDir"
 MAGIC_PROFILE_VALUE = "this"
+
+
+def _strip_jsonc(text: str) -> str:
+    """
+    Strip JSONC-only syntax - "//" line comments, "/* */" block comments, and
+    trailing commas before a closing "]"/"}" - so the result can be parsed by
+    the standard `json` module. Mirrors what the C++ core already does
+    natively via nlohmann/json's ignore_comments/ignore_trailing_commas flags.
+
+    Respects string literals: a "//" or "/*" inside a quoted string (e.g. a
+    "https://" URL in a "git" field) is left untouched.
+    """
+    result = []
+    i = 0
+    n = len(text)
+    in_string = False
+    escape = False
+
+    while i < n:
+        c = text[i]
+
+        if in_string:
+            result.append(c)
+            if escape:
+                escape = False
+            elif c == '\\':
+                escape = True
+            elif c == '"':
+                in_string = False
+            i += 1
+            continue
+
+        if c == '"':
+            in_string = True
+            result.append(c)
+            i += 1
+            continue
+
+        if c == '/' and i + 1 < n and text[i + 1] == '/':
+            j = text.find('\n', i)
+            i = n if j == -1 else j
+            continue
+
+        if c == '/' and i + 1 < n and text[i + 1] == '*':
+            j = text.find('*/', i + 2)
+            i = n if j == -1 else j + 2
+            continue
+
+        result.append(c)
+        i += 1
+
+    return re.sub(r',(\s*[}\]])', r'\1', ''.join(result))
+
+
+def _load_jsonc(path) -> Any:
+    """Read and parse a JSONC file (JSON with comments/trailing commas)."""
+    with open(path, 'r') as f:
+        return json.loads(_strip_jsonc(f.read()))
 
 
 # Module-level project name (set by consuming code)
@@ -69,7 +128,7 @@ def get_root_directory() -> Path:
     """
     Find the WebDash root directory.
 
-    Searches upward from the current directory for a webdash-profile.json
+    Searches upward from the current directory for a webdash.profile.jsonc
     file containing the magic key-value pair that identifies the root.
     Also checks the WEBDASH environment variable.
 
@@ -91,7 +150,7 @@ def get_root_directory() -> Path:
     # Start from current working directory
     current = Path.cwd().resolve()
 
-    # Traverse upward looking for webdash-profile.json
+    # Traverse upward looking for webdash.profile.jsonc
     while True:
         if _is_valid_webdash_root(current):
             return current
@@ -112,7 +171,7 @@ def get_root_directory() -> Path:
 
 def _is_valid_webdash_root(directory: Path) -> bool:
     """
-    Check if a directory contains a valid webdash-profile.json.
+    Check if a directory contains a valid webdash.profile.jsonc.
 
     Args:
         directory: Path to check
@@ -125,8 +184,7 @@ def _is_valid_webdash_root(directory: Path) -> bool:
         return False
 
     try:
-        with open(profile_path, 'r') as f:
-            data = json.load(f)
+        data = _load_jsonc(profile_path)
 
         # Check for the magic key: webdash.rootDir = "this"
         webdash_section = data.get("webdash", {})
@@ -187,7 +245,7 @@ def get_temporary_storage_path() -> Path:
 
 def get_profile_value(key_path: str) -> Optional[str]:
     """
-    Get a value from webdash-profile.json by dot-separated key path.
+    Get a value from webdash.profile.jsonc by dot-separated key path.
 
     Args:
         key_path: Dot-separated path like "ports.my-service" or "env.WEBDASH"
@@ -203,8 +261,7 @@ def get_profile_value(key_path: str) -> Optional[str]:
     profile_path = root / PROFILE_FILENAME
 
     try:
-        with open(profile_path, 'r') as f:
-            data = json.load(f)
+        data = _load_jsonc(profile_path)
 
         # Navigate the nested structure
         keys = key_path.split('.')

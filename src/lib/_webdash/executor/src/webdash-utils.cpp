@@ -127,8 +127,10 @@ namespace WebDashUtils {
         configStream.open(filepath.string().c_str(), ifstream::in);
 
         // N.B. Parsing can throw exceptions.
-        json profile_content;
-        configStream >> profile_content;
+        // Accept JSONC: "//" and "/* */" comments plus trailing commas, in
+        // addition to plain JSON (same as WebDashConfig::Load() for
+        // webdash.config.jsonc - see that function for why).
+        json profile_content = json::parse(configStream, nullptr, true, true, true);
 
         // Determined a chain of key identifiers and the values they point to in JSON. Add to return.
         auto AddElementToReturn = [&](vector<string> chain, const auto& element) -> void {
@@ -230,12 +232,79 @@ namespace WebDashUtils {
                 }
             }
 
+            // The static file server has a sensible built-in default (see
+            // WebDashConst::Public::kDefaultStaticFileServerPort) so profiles
+            // aren't required to define it - mirror that here so $.port()
+            // resolves the same way a config would see the running server.
+            if (!found && port_id == WebDashConst::Public::kProfilePortStaticFileServer) {
+                port_value = std::to_string(WebDashConst::Public::kDefaultStaticFileServerPort);
+                found = true;
+            }
+
             if (found) {
                 // Replace $.port(identifier) with the port value
                 result.replace(pos, end_pos - pos + 1, port_value);
                 // Don't advance pos, in case there are nested or adjacent patterns
             } else {
                 // Not found, skip past this pattern
+                pos = end_pos + 1;
+            }
+        }
+
+        return result;
+    }
+
+
+    string ResolveEnvReferences(const string& source) {
+        string result = source;
+        const string env_prefix = "$.env(";
+
+        size_t pos = 0;
+        while ((pos = result.find(env_prefix, pos)) != string::npos) {
+            size_t end_pos = result.find(')', pos);
+            if (end_pos == string::npos) {
+                // No closing paren found, skip this occurrence
+                pos += env_prefix.length();
+                continue;
+            }
+
+            // Extract the content between $.env( and ) - either "NAME" or "NAME, default"
+            string inner = result.substr(pos + env_prefix.length(),
+                                         end_pos - pos - env_prefix.length());
+
+            string var_name = inner;
+            string default_value;
+            bool has_default = false;
+
+            size_t comma_pos = inner.find(',');
+            if (comma_pos != string::npos) {
+                var_name = inner.substr(0, comma_pos);
+                default_value = inner.substr(comma_pos + 1);
+                has_default = true;
+
+                // Trim leading/trailing whitespace from the default value.
+                while (!default_value.empty() && isspace(static_cast<unsigned char>(default_value.front())))
+                    default_value.erase(default_value.begin());
+                while (!default_value.empty() && isspace(static_cast<unsigned char>(default_value.back())))
+                    default_value.pop_back();
+            }
+
+            // Trim leading/trailing whitespace from the variable name.
+            while (!var_name.empty() && isspace(static_cast<unsigned char>(var_name.front())))
+                var_name.erase(var_name.begin());
+            while (!var_name.empty() && isspace(static_cast<unsigned char>(var_name.back())))
+                var_name.pop_back();
+
+            const char* env_value = var_name.empty() ? nullptr : getenv(var_name.c_str());
+
+            if (env_value != nullptr) {
+                result.replace(pos, end_pos - pos + 1, env_value);
+                // Don't advance pos, in case there are nested or adjacent patterns
+            } else if (has_default) {
+                result.replace(pos, end_pos - pos + 1, default_value);
+            } else {
+                // Not set and no fallback given - leave the pattern untouched
+                // so a missing required environment variable is obvious.
                 pos = end_pos + 1;
             }
         }

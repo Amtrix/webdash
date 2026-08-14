@@ -4,7 +4,8 @@
  * Tests the webdash Node.js logging API with efficient file handling.
  */
 
-const { WebDashProject } = require('/mnt/c/webdash/src/lib/_webdash/executor/bindings/node/project');
+const path = require('path');
+const { WebDashProject } = require(path.join(process.env.WEBDASH, 'src/lib/_webdash/executor/bindings/node/project'));
 
 const FILENAME = 'webdash-logtests-javascript.js';
 

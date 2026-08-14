@@ -3,9 +3,9 @@
  * Tests the webdash C++ logging API.
  *
  * Compile with:
- *   g++ -std=c++20 -I/mnt/c/webdash/src/lib/_webdash/executor/include \
- *       -I/mnt/c/webdash/src/lib/external/json/include \
- *       -L/mnt/c/webdash/app-persistent/lib \
+ *   g++ -std=c++20 -I$WEBDASH/src/lib/_webdash/executor/include \
+ *       -I$WEBDASH/src/lib/external/json/include \
+ *       -L$WEBDASH/app-persistent/lib \
  *       -o webdash-logtests-cpp webdash-logtests-cpp.cpp \
  *       -lwebdash-executor -lboost_filesystem
  */

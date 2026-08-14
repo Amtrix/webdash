@@ -163,7 +163,7 @@ napi_value GetProjectName(napi_env env, napi_callback_info info) {
 /**
  * webdash.getProfileValue(keyPath: string): string | undefined
  *
- * Get a value from webdash-profile.json by dot-separated key path.
+ * Get a value from webdash.profile.jsonc by dot-separated key path.
  * Example: getProfileValue("ports.wallpaper-monitor") returns "8765"
  */
 napi_value GetProfileValue(napi_env env, napi_callback_info info) {

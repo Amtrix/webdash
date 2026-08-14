@@ -67,6 +67,18 @@ class WebDashConfigTask {
         string _name;
         std::optional<string> _wdir;
 
+        // The directory containing this task's config file. Used as the
+        // fallback working directory when `_wdir` isn't explicitly set (see
+        // docs/configuration.md#working-directory), without disturbing the
+        // "was wdir explicitly set?" checks elsewhere that key off _wdir.
+        string _config_dir;
+
+        // This task's config-level "env" entries (see
+        // docs/configuration.md#environment-variables), already resolved
+        // (substitutions applied) by WebDashConfig::Load(). Exported via
+        // setenv() for the process actually running this task's actions.
+        vector<pair<string, string>> _config_env;
+
         // Initialize to current time so first execution happens immediately.
         std::chrono::high_resolution_clock::time_point _last_exec_time =
             std::chrono::high_resolution_clock::now() - std::chrono::hours(24 * 365);

@@ -1,0 +1,16 @@
+{
+    "priority": 0,
+    "project-name": "WEBDASH",
+    "project-location": "$.rootDir()",
+    "commands": [
+        {
+            "name": "open-portal",
+            "executionStyle": "stopOnFirstSuccess",
+            "actions": [
+                "powershell.exe -NoProfile -Command 'Start-Process chrome -ArgumentList \"--new-window\",\"http://webdash.com:$.port(static-file-server)/portal/\"'",
+                "xdg-open https://webdash.com:$.port(static-file-server)/portal/"
+            ],
+            "wdir": "$.thisDir()"
+        }
+    ]
+}

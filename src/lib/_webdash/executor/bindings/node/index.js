@@ -35,8 +35,8 @@ try {
   }
 }
 
-const CONFIG_FILENAME = 'webdash.config.json';
-const PROFILE_FILENAME = 'webdash-profile.json';
+const CONFIG_FILENAME = 'webdash.config.jsonc';
+const PROFILE_FILENAME = 'webdash.profile.jsonc';
 
 /**
  * Format a log message with optional metadata.
@@ -118,7 +118,7 @@ function getProjectName() {
 }
 
 /**
- * Get a value from webdash-profile.json by dot-separated key path.
+ * Get a value from webdash.profile.jsonc by dot-separated key path.
  * @param {string} keyPath - Dot-separated path like "ports.my-service"
  * @returns {string|undefined} The value, or undefined if not found
  * @example
@@ -164,14 +164,67 @@ function getNestedValue(obj, keyPath) {
 }
 
 /**
- * Read and parse a JSON config file.
+ * Strip JSONC-only syntax (line comments, block comments, and trailing
+ * commas before a closing "]"/"}") so the result can be parsed by
+ * JSON.parse. Respects string literals (a comment marker inside a quoted
+ * string, e.g. a "https://" URL, is left untouched). Mirrors the C++ core's
+ * native nlohmann/json ignore_comments/ignore_trailing_commas support.
+ * @param {string} text - Raw JSONC text
+ * @returns {string} Plain JSON text
+ */
+function stripJsonComments(text) {
+  let result = '';
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+
+    if (inString) {
+      result += c;
+      if (escapeNext) {
+        escapeNext = false;
+      } else if (c === '\\') {
+        escapeNext = true;
+      } else if (c === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (c === '"') {
+      inString = true;
+      result += c;
+      continue;
+    }
+
+    if (c === '/' && text[i + 1] === '/') {
+      const nl = text.indexOf('\n', i);
+      i = (nl === -1 ? text.length : nl) - 1;
+      continue;
+    }
+
+    if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      i = (end === -1 ? text.length : end + 1);
+      continue;
+    }
+
+    result += c;
+  }
+
+  return result.replace(/,(\s*[}\]])/g, '$1');
+}
+
+/**
+ * Read and parse a JSONC config file (JSON with comments/trailing commas).
  * @param {string} filePath - Path to JSON file
  * @returns {object|null} Parsed JSON or null if not found/invalid
  */
 function readJsonFile(filePath) {
   try {
     if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      return JSON.parse(stripJsonComments(fs.readFileSync(filePath, 'utf8')));
     }
   } catch (e) {
     // Ignore parse errors
@@ -183,24 +236,24 @@ function readJsonFile(filePath) {
  * Resolve a config value by traversing up the directory tree.
  *
  * Lookup order:
- * 1. webdash.config.json in startDir
- * 2. webdash.config.json in parent directories (up to root)
- * 3. webdash-profile.json at WebDash root
+ * 1. webdash.config.jsonc in startDir
+ * 2. webdash.config.jsonc in parent directories (up to root)
+ * 3. webdash.profile.jsonc at WebDash root
  *
  * @param {string} keyPath - Dot-separated path like "ports.my-service"
  * @param {object} [options] - Options
  * @param {string} [options.startDir] - Directory to start searching from (default: process.cwd())
- * @param {boolean} [options.skipLocal] - Skip webdash.config.json files, only check profile
+ * @param {boolean} [options.skipLocal] - Skip webdash.config.jsonc files, only check profile
  * @returns {*} The resolved value, or undefined if not found
  *
  * @example
- * // From current directory, check webdash.config.json files then profile
+ * // From current directory, check webdash.config.jsonc files then profile
  * resolveConfigValue('ports.my-service')
  *
  * // Start from a specific directory
  * resolveConfigValue('mycommands.build', { startDir: '/path/to/project' })
  *
- * // Only check webdash-profile.json
+ * // Only check webdash.profile.jsonc
  * resolveConfigValue('env.WEBDASH', { skipLocal: true })
  */
 function resolveConfigValue(keyPath, options = {}) {
@@ -213,7 +266,7 @@ function resolveConfigValue(keyPath, options = {}) {
     webdashRoot = process.env.WEBDASH;
   }
 
-  // Traverse up from startDir looking for webdash.config.json
+  // Traverse up from startDir looking for webdash.config.jsonc
   if (!skipLocal) {
     let currentDir = path.resolve(startDir);
     const rootDir = path.parse(currentDir).root;
@@ -241,7 +294,7 @@ function resolveConfigValue(keyPath, options = {}) {
     }
   }
 
-  // Fall back to webdash-profile.json via native bindings
+  // Fall back to webdash.profile.jsonc via native bindings
   // This handles the $.rootDir() substitutions properly
   const profileValue = native.getProfileValue(keyPath);
   if (profileValue !== undefined) {
@@ -256,7 +309,7 @@ module.exports = {
   getRootDirectory,
   getProjectName,
 
-  // Direct profile access (webdash-profile.json only)
+  // Direct profile access (webdash.profile.jsonc only)
   getProfileValue,
   getPort,
 

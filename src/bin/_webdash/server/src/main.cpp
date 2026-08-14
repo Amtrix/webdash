@@ -84,6 +84,8 @@ static std::optional<int> profile_get_static_file_server_port() {
 
     for (const auto& entry : profile_entries) {
         if (WebDashUtils::GetWebDashJsonKey(entry) == target_key) {
+            // Present in the profile: honor it exactly, including explicit
+            // opt-out ("0") or a malformed value (both return nullopt).
             try {
                 int p = std::stoi(entry.GetValue());
                 if (p > 0) return p;
@@ -91,7 +93,10 @@ static std::optional<int> profile_get_static_file_server_port() {
             return std::nullopt;
         }
     }
-    return std::nullopt;
+
+    // Not present at all: this is core WebDash infrastructure, not a user
+    // project port, so it shouldn't require every profile to define it.
+    return WebDashConst::Public::kDefaultStaticFileServerPort;
 }
 
 static bool is_under_root_dir(const fs::path& p, const fs::path& root) {
@@ -421,8 +426,9 @@ static std::optional<WidgetProjectDef> parse_widget_project_config(const std::st
         std::ifstream in(config_path, std::ios::in);
         if (!in.is_open()) return std::nullopt;
 
-        json j;
-        in >> j;
+        // Accept JSONC ("//"/"/* */" comments, trailing commas), same as the
+        // runtime config parser.
+        json j = json::parse(in, nullptr, true, true, true);
         if (!j.is_object()) return std::nullopt;
 
         if (!j.contains("widget-identifier") || !j["widget-identifier"].is_string()) {
@@ -1400,25 +1406,11 @@ int execute_main()
 
     std::unique_ptr<HttpFileServer> file_server;
     {
-        // Look up the static-file-server port from the profile's "ports" section
-        const auto& profile_entries = WebDashCore::Get().GetKeyValuesFromRootProfile();
-        int static_port = 0;
-
-        const string target_key = string(WebDashConst::Internal::kJsonKeyPrefix) +
-                                  ".ports." +
-                                  string(WebDashConst::Public::kProfilePortStaticFileServer);
-
-        for (const auto& entry : profile_entries) {
-            if (WebDashUtils::GetWebDashJsonKey(entry) == target_key) {
-                try {
-                    static_port = stoi(entry.GetValue());
-                } catch (...) {
-                    WebDashCore::Get().Log(WebDashType::LogType::ERR,
-                        "Invalid static-file-server port in profile: " + entry.GetValue());
-                }
-                break;
-            }
-        }
+        // Falls back to WebDashConst::Public::kDefaultStaticFileServerPort if
+        // the profile doesn't specify one; nullopt only if the profile
+        // explicitly disables it ("0") or sets an invalid value.
+        const auto static_port_opt = profile_get_static_file_server_port();
+        const int static_port = static_port_opt.value_or(0);
 
         if (static_port > 0) {
             // API handler for the portal dashboard — runs inside the HTTP server threads.
@@ -1582,7 +1574,7 @@ int execute_main()
 
                     for (const auto& item : configs_json) {
                         std::string cfg_path = item["path"].get<std::string>();
-                        // Config path is .../webdash.config.json — get its directory
+                        // Config path is .../webdash.config.jsonc — get its directory
                         auto dir = std::filesystem::path(cfg_path).parent_path();
 
                         // Walk up to find .git directory
@@ -1669,9 +1661,9 @@ int execute_main()
                 }
 
                 // Click handler for Registered Projects:
-                // - If $.code.editor is set in webdash-profile.json => open project directory
+                // - If $.code.editor is set in webdash.profile.jsonc => open project directory
                 // - Else => portal will open an editor dialog (returns action=edit)
-                // GET /_api/open-project?config=<absolute-path-to-webdash.config.json>
+                // GET /_api/open-project?config=<absolute-path-to-webdash.config.jsonc>
                 if (url_path.rfind("/_api/open-project", 0) == 0) {
                     json resp;
 
@@ -1743,7 +1735,7 @@ int execute_main()
                 }
 
                 // Read current config contents for portal editing.
-                // GET /_api/read-config?config=<absolute-path-to-webdash.config.json>
+                // GET /_api/read-config?config=<absolute-path-to-webdash.config.jsonc>
                 if (url_path.rfind("/_api/read-config", 0) == 0) {
                     json resp;
 
@@ -1917,9 +1909,9 @@ int execute_main()
             file_server->Start();
         } else {
             WebDashCore::Get().Log(WebDashType::LogType::INFO,
-                "Static file server disabled (no '" +
+                "Static file server disabled (profile explicitly sets '" +
                 string(WebDashConst::Public::kProfilePortStaticFileServer) +
-                "' port in profile)");
+                "' to 0 or an invalid value)");
         }
     }
 
@@ -1927,11 +1919,11 @@ int execute_main()
     // Register IPC command handlers, then start the WebSocket server.
     //
 
-    // ── REGISTER ────────────────────────────────────────────────────────
+    // ── CONFIG_REGISTER ────────────────────────────────────────────────────────
     // Adds config to the list of periodically executed files.
     // Payload can be a plain path or JSON: {"path": "...", "user": "username"}
     // Fire-and-forget (no response sent).
-    websocket::dispatcher.On(IpcCommand::REGISTER,
+    websocket::dispatcher.On(IpcCommand::CONFIG_REGISTER,
         [&suite](const IpcMsgParser::Parsed& msg, IpcDispatcher::IpcResponder /*reply*/) {
             WebDashCore::Get().Log(WebDashType::LogType::INFO, "`register` request received.");
 
@@ -1978,8 +1970,8 @@ int execute_main()
             }
         });
 
-    // ── UNREGISTER ──────────────────────────────────────────────────────
-    websocket::dispatcher.On(IpcCommand::UNREGISTER,
+    // ── CONFIG_UNREGISTER ──────────────────────────────────────────────────────
+    websocket::dispatcher.On(IpcCommand::CONFIG_UNREGISTER,
         [](const IpcMsgParser::Parsed& /*msg*/, IpcDispatcher::IpcResponder reply) {
             reply("success");
         });
@@ -2216,7 +2208,7 @@ int execute_main()
     // ── WSL FORWARDED PORTS (server-side list) ───────────────────────────
     // Lets the client fetch port-forward status without prompting for sudo.
     // When the server runs as root under systemd, it can read iptables rules.
-    websocket::dispatcher.On(IpcCommand::WSL_FORWARDED_PORTS_LIST,
+    websocket::dispatcher.On(IpcCommand::TOOLS_PORTS_FORWARDED_LIST,
         [](const IpcMsgParser::Parsed& /*msg*/, IpcDispatcher::IpcResponder reply) {
             namespace fs = std::filesystem;
 
@@ -2258,8 +2250,8 @@ int execute_main()
         });
 
     // ── WRITE_CONFIG ───────────────────────────────────────────────────
-    // Writes a registered webdash.config.json.
-    // Payload JSON: {"config":"/abs/path/webdash.config.json", "content":"..."}
+    // Writes a registered webdash.config.jsonc.
+    // Payload JSON: {"config":"/abs/path/webdash.config.jsonc", "content":"..."}
     websocket::dispatcher.On(IpcCommand::WRITE_CONFIG,
         [&suite](const IpcMsgParser::Parsed& msg, IpcDispatcher::IpcResponder reply) {
             json resp;
@@ -2294,7 +2286,7 @@ int execute_main()
 
                 if (cfg_path.filename() != WebDashCore::GetProjectConfigFilename()) {
                     resp["ok"] = false;
-                    resp["error"] = "only webdash.config.json is writable";
+                    resp["error"] = "only webdash.config.jsonc is writable";
                     reply(resp.dump());
                     return;
                 }

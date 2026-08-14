@@ -1,0 +1,15 @@
+// Fixture project for test-jsonc-support in the parent tests config.
+// This file deliberately uses "//" line comments, "/* */" block comments, and
+// trailing commas to prove the executor accepts JSONC, not just plain JSON.
+{
+    "commands": [
+        {
+            "name": "test-jsonc-parses-and-runs",
+            "silent": true,
+            /* This action just needs to succeed - if this file failed to
+               parse at all, webdash would report "no matching command found"
+               instead of running it. */
+            "action": "echo jsonc-ok", // trailing comment on the same line
+        },
+    ],
+}

@@ -13,7 +13,7 @@ Verifies that the WebDash server's scheduling system works correctly by logging 
 webdash all
 
 # Register with WebDash server for scheduled execution
-webdash --register
+webdash --config.register
 ```
 
 ## Verification
@@ -33,7 +33,7 @@ Heartbeat: 2025-12-24 15:31:00.456
 
 ## Configuration
 
-The `heartbeat` command in `webdash.config.json` is configured with:
+The `heartbeat` command in `webdash.config.jsonc` is configured with:
 - `frequency: "60000"` — Run at most once per 60 seconds (60000 ms)
 
 ## Manual Run

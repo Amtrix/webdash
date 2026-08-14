@@ -1,537 +1,125 @@
 # WebDash
 
-**Run project commands from anywhere. Build with dependencies. No more remembering paths.**
+**One command runner for all your projects.** Define your commands once in a small
+JSON file, then run them from anywhere with `webdash <command>` — dependencies,
+working directories, and environment included.
 
-WebDash is a command runner that lets you define, share, and execute project commands through simple JSON configs. Navigate to any registered project directory and run `webdash build` — it handles dependencies, sets up the environment, and runs your commands.
-
-> **Think of it as:** A personal `make` that works across all your projects, with built-in scheduling and environment management.
-
-### At a Glance
-
-| What | How |
-|------|-----|
-| Define commands | JSON config in each project |
-| Run commands | `webdash build` from anywhere |
-| Chain dependencies | `"dependencies": [":lib-build", "../util:compile"]` |
-| Manage environment | One profile sets PATH, env vars, git repos |
-| Schedule tasks | `"frequency": "daily"` runs automatically |
-| Discover projects | `webdash --list-registered-configs` shows everything |
+Think of it as a personal `make` that works across every project on your machine,
+with optional scheduling and a shared environment profile.
 
 ---
 
-## Quick Start
+## Requirements
 
-### 1. Install Dependencies
+- Linux (or WSL2 on Windows) — see [Platform support](docs/platform-support.md)
+- `git`, `cmake`, `make`, `g++` (>= 9)
+- `libboost-all-dev`
+- An SSH key configured for GitHub (setup clones over `git@github.com:` URLs)
+
+On Debian/Ubuntu:
 
 ```bash
 sudo apt-get update
-sudo apt-get install git cmake make libboost-all-dev g++
+sudo apt-get install git cmake make g++ libboost-all-dev
 ```
 
-### 2. Run Setup
+## Install
 
 ```bash
-./webdash-setup/setup-webdash.sh
+./install.sh
 ```
 
-That's it. The setup script builds WebDash and configures your shell automatically.
+The script builds WebDash, installs the `webdash` binary, and adds an init line to
+your `~/.bashrc` (or `~/.zshrc`). Open a new terminal — or `source ~/.bashrc` — and
+`webdash` is ready.
 
-### 3. Start Using WebDash
+> Want to try setup without touching your system? See
+> [Testing → Sandboxed setup test](docs/testing.md#sandboxed-setup-test).
 
-```bash
-# In any project with a webdash.config.json (if build/install/all defined):
-webdash build          # Run the "build" command
-webdash install        # Run the "install" command
-webdash all            # Run everything
+## Quick start
 
-# See what's available:
-webdash --help         # Show help
-webdash --list-registered-configs  # List all registered projects
-```
-
----
-
-## Core Concept: Project Commands
-
-Every project can have a `webdash.config.json` that defines commands:
+Create a `webdash.config.jsonc` in any project:
 
 ```json
 {
     "commands": [
-        {
-            "name": "build",
-            "actions": [
-                "mkdir -p build/",
-                "cmake -B build",
-                "make -C build"
-            ],
-            "wdir": "$.thisDir()"
-        },
-        {
-            "name": "install",
-            "action": "cp build/myapp /usr/local/bin/",
-            "wdir": "$.thisDir()"
-        },
-        {
-            "name": "all",
-            "dependencies": [":build", ":install"]
-        }
+        { "name": "build", "action": "make", "wdir": "$.thisDir()" },
+        { "name": "test",  "action": "make test", "wdir": "$.thisDir()" },
+        { "name": "all",   "dependencies": [":build", ":test"] }
     ]
 }
 ```
 
 Then from that directory:
-```bash
-webdash build    # Runs cmake and make
-webdash all      # Runs build, then install
-```
-
-### Key Features
-
-| Feature | Example | What it does |
-|---------|---------|--------------|
-| **Multiple actions** | `"actions": ["cmd1", "cmd2"]` | Run commands in sequence |
-| **Dependencies** | `"dependencies": [":build"]` | Run other commands first |
-| **Cross-project deps** | `"dependencies": ["$.rootDir()/lib/foo:build"]` | Build another project first |
-| **Working directory** | `"wdir": "$.thisDir()/build"` | Run from a specific directory |
-
-### Path Variables
-
-- `$.thisDir()` — Directory containing the current `webdash.config.json`
-- `$.rootDir()` — The WebDash root directory (where `webdash-profile.json` lives)
-
----
-
-## Running Commands from Other Projects
-
-You can run commands from any project by specifying its path directly — **no registration required**:
 
 ```bash
-webdash /path/to/my/project:build
+webdash build   # runs `make`
+webdash all     # runs build, then test
 ```
 
-This reads `webdash.config.json` from that path and runs the `build` command.
+That's the core loop:
 
-## Scheduled Execution (Requires Registration)
+- `:build` runs another command in the same config first.
+- `$.thisDir()` and `$.rootDir()` expand to real paths before commands run.
+- You can run any project's command by path, no setup needed:
+  `webdash /path/to/project:build`.
 
-**This is the main purpose of registration.** When you register a project, the WebDash server can automatically run commands on a schedule.
+From here, the [documentation](docs/) goes deep on each topic.
 
-### How It Works
+## Documentation
 
-1. **Register your project** so the server knows about it:
-   ```bash
-   cd /path/to/my/project
-   webdash --register
-   ```
+| Guide | What it covers |
+| ----- | -------------- |
+| [Configuration](docs/configuration.md) | Everything in a project's `webdash.config.jsonc` — commands and every field |
+| [Profile](docs/profile.md) | The root `webdash.profile.jsonc` — environment, ports, modules, dependencies, backups |
+| [Substitutions & conditions](docs/substitutions.md) | The `$....()` variables and the `condition` mini-language |
+| [CLI reference](docs/cli.md) | Every `webdash` command and flag |
+| [Scheduling & the server](docs/scheduling.md) | Registration, the background server, and scheduled tasks |
+| [Logging](docs/logging.md) | Log files, rotation, and the C++/Node/Python/TypeScript logging APIs |
+| [Testing](docs/testing.md) | Running the functional test suite and the sandboxed setup test |
+| [Platform support](docs/platform-support.md) | Linux, WSL2, and what's not supported yet |
 
-2. **Add scheduling fields** to commands in `webdash.config.json`:
-   ```json
-   {
-       "name": "daily-backup",
-       "action": "bash backup.sh",
-       "frequency": "daily",
-       "when": "new-day",
-       "wdir": "$.thisDir()"
-   }
-   ```
+New to the project? The [documentation index](docs/README.md) suggests a reading
+order.
 
-3. **The WebDash server** runs in the background and executes scheduled commands automatically.
-
-### Scheduling Options
-
-| Field | Values | Description |
-|-------|--------|-------------|
-| `frequency` | `"daily"` | Run at most once per 24 hours |
-| `frequency` | `"5000"` | Run at most once per 5000 milliseconds |
-| `when` | `"new-day"` | Only trigger when the calendar day changes |
-| `condition` | `"$.isPortUnused(...)"` | Only run if condition is true |
-
-Commands with `frequency` set are **only** executed by the server's scheduler — they won't run when you manually call `webdash <command>`.
-
-### Condition Functions
-
-Use these in the `condition` field to control when scheduled commands run:
-
-| Function | Description |
-|----------|-------------|
-| `$.isPortUnused(<port>)` | True if no process is listening on the port |
-| `$.port(<identifier>)` | Resolves to port number from `ports.<identifier>` in profile |
-
-### Example: Auto-Start Server
-
-Keep a server running automatically — if it dies, the scheduler restarts it:
-
-```json
-{
-    "name": "ensure-server",
-    "action": "webdash $.thisDir():start-server",
-    "condition": "$.isPortUnused($.port(my-server-port))",
-    "frequency": "60000",
-    "wdir": "$.thisDir()"
-}
-```
-
-With `ports.my-server-port: "8080"` in your profile, this checks every 60 seconds if port 8080 is unused, and starts the server if so.
-
-### Example: Daily Build Report
-
-```json
-{
-    "name": "report-build-state",
-    "actions": ["report-build-state build"],
-    "frequency": "daily",
-    "when": "new-day",
-    "wdir": "$.thisDir()"
-}
-```
-
-This command runs once per day (on the first check after midnight) and reports the build status.
-
-### Background Processes
-
-Use `"background": true` to run a command as a detached daemon process:
-
-```json
-{
-    "name": "start-server",
-    "action": "python3 server.py",
-    "background": true,
-    "wdir": "$.thisDir()"
-}
-```
-
-The process continues running after webdash exits, and won't create zombie processes.
-
-### Other Registration Benefits
-
-- See all registered projects: `webdash --list-registered-configs`
-- Reload configs after changes: `webdash --reload-all`
-
----
-
-## CLI Reference
-
-| Command | Description |
-|---------|-------------|
-| `webdash <command>` | Run command from `./webdash.config.json` |
-| `webdash /path:command` | Run command from a specific project |
-| `webdash --help` or `-h` | Show help |
-| `webdash --list-registered-configs` | List all registered projects |
-| `webdash --register` | Register current directory's project |
-| `webdash --unregister` | Unregister current directory's project |
-| `webdash --reload-all` | Reload all project configurations |
-| `webdash --ping-server` | Check if the WebDash server is running |
-
----
-
-## Example Workflow
-
-```bash
-# 1. Create a project config
-cat > webdash.config.json << 'EOF'
-{
-    "commands": [
-        {"name": "build", "action": "make", "wdir": "$.thisDir()"},
-        {"name": "test", "action": "make test", "wdir": "$.thisDir()"},
-        {"name": "all", "dependencies": [":build", ":test"]}
-    ]
-}
-EOF
-
-# 2. Register it
-webdash --register
-
-# 3. Use it
-webdash build
-webdash all
-```
-
----
-
-# Appendix
-
-## Directory Structure
-
-WebDash uses a standard directory layout:
+## How it works
 
 ```
-app-persistent/          # Installed binaries and libraries
-    bin/
-    lib/
-    data/
-        webdash-client/
-            webdash.terminal.init.sh  # Source this in ~/.bashrc
-app-temporary/           # Logs and temporary files
-    logging/
-webdash-setup/           # Setup scripts
-src/                     # Source code
-    bin/                 # Executables
-    lib/                 # Libraries
-webdash-profile.json     # Global configuration
+webdash.profile.jsonc     # one per machine — your environment & project list
+        │
+        ▼
+  webdash (CLI) ──reads──► webdash.config.jsonc   # one per project — commands
+        │
+        ├──► runs your shell commands (with dependencies, in order)
+        │
+        └──► webdash-server (optional) ──► runs scheduled commands on its own
 ```
 
-## Global Configuration: webdash-profile.json
+1. The CLI reads the project config and the root profile.
+2. Path variables are substituted with real paths.
+3. Dependencies are resolved and executed in order.
+4. If running, the [server](docs/scheduling.md) independently handles scheduled
+   tasks.
 
-The root `webdash-profile.json` defines global settings:
+The configs are just shell commands underneath — you can always run them by hand,
+so there's no lock-in.
 
-```json
-{
-    "webdash": {
-        "rootDir": "this"
-    },
-    "env": {
-        "WEBDASH": "$.rootDir()"
-    },
-    "path-add": [
-        "$.rootDir()/app-persistent/bin"
-    ],
-    "modules": [
-        {
-            "path": "$.rootDir()/src/bin/my-tool",
-            "git": "git@github.com:user/repo.git",
-            "branch": "main",
-            "run": ":all",
-            "register": true
-        }
-    ],
-    "dependencies": [
-        {
-            "path": "$.rootDir()/src/lib/external/json",
-            "git": "git@github.com:nlohmann/json.git"
-        }
-    ],
-    "settings": {
-        "interactive-clone": false
-    }
-}
-```
-
-| Field | Purpose |
-|-------|---------|
-| `webdash.rootDir` | Marks this as the WebDash root (`"this"`) |
-| `env` | Environment variables to set |
-| `path-add` | Directories to add to `$PATH` |
-| `modules` | WebDash projects to auto-clone (have `webdash.config.json`) |
-| `dependencies` | External git repos to clone (libraries, not WebDash projects) |
-| `settings` | Global settings (see below) |
-
-### modules vs dependencies
-
-| | `modules` | `dependencies` |
-|---|-----------|----------------|
-| **Purpose** | WebDash projects with commands | External libraries/dependencies |
-| **Has config** | Yes (`webdash.config.json`) | No |
-| **Auto-clone** | When referenced as dependency | During bootstrap (setup script) |
-| **Example** | Your app's server, tools | nlohmann/json, websocketpp |
-
-### modules options
-
-| Field | Required | Purpose |
-|-------|----------|---------|
-| `path` | Yes | Where the module lives (target directory) |
-| `git` | Yes | Git repository URL |
-| `branch` | No | Git branch to checkout (default: repo's default) |
-| `run` | No | Command to run after cloning (e.g., `:build`) |
-| `register` | No | Auto-register the project (`true`/`false`) |
-
-### dependencies options
-
-| Field | Required | Purpose |
-|-------|----------|---------|
-| `path` | Yes | Where to clone the dependency |
-| `git` | Yes | Git repository URL |
-| `branch` | No | Git branch to checkout |
-
-### settings options
-
-| Setting | Default | Purpose |
-|---------|---------|---------|
-| `interactive-clone` | `false` | Prompt before auto-cloning modules |
-
-**Auto-clone behavior:** When a task depends on a path that doesn't exist, WebDash will automatically search `modules` for a matching path and clone it. This enables seamless dependency resolution without manual setup.
-
-
-
-## Advanced Command Options
-
-```json
-{
-    "name": "my-command",
-    "actions": ["cmd1", "cmd2"],
-    "dependencies": [":other-cmd", "$.rootDir()/lib/foo:build"],
-    "wdir": "$.thisDir()/subdir",
-    "frequency": "daily",
-    "when": "new-day"
-}
-```
-
-| Field | Purpose |
-|-------|---------|
-| `name` | Command name (used with `webdash <name>`) |
-| `action` / `actions` | Shell command(s) to run |
-| `dependencies` | Commands to run first (`:name` for local, full path for external) |
-| `wdir` | Working directory |
-| `frequency` | How often to run (for scheduled tasks) |
-| `when` | Trigger condition |
-
-### Inline Module Dependencies
-
-Dependencies can also include inline module definitions, allowing you to declare git sources directly without requiring a profile entry:
-
-```json
-{
-    "name": "build",
-    "dependencies": [
-        ":setup",
-        "$.rootDir()/src/lib/core:build",
-        {
-            "path": "$.rootDir()/src/lib/external-dep",
-            "git": "git@github.com:user/external-dep.git",
-            "branch": "v2.0",
-            "run": ":build"
-        }
-    ],
-    "action": "make"
-}
-```
-
-When WebDash encounters an inline module dependency whose path doesn't exist, it will automatically clone from the specified git URL before running the task.
-
-## Environment Variable
-
-WebDash sets the `WEBDASH` environment variable to the root directory. This is used internally and can be referenced in your own scripts.
-
----
-
-## Why WebDash?
-
-### The Problem
-
-Modern development involves juggling multiple projects across different ecosystems:
-
-- **Each project has its own build system** — CMake, Make, npm, cargo, gradle, poetry...
-- **Environment setup is manual** — Different PATH entries, env vars, tool versions
-- **No unified interface** — You need to remember `npm run build` vs `make` vs `cmake --build`
-- **Cross-project dependencies are painful** — Building lib A before app B requires scripts or manual steps
-- **Scheduled maintenance is fragmented** — Cron jobs scattered across machines and configs
-
-### The Solution
-
-WebDash provides a **single, consistent interface** for all projects:
-
-```bash
-webdash build    # Works whether it's C++, Node.js, Rust, or Python underneath
-```
-
-**Key differentiators:**
-
-| Feature | Traditional | WebDash |
-|---------|-------------|---------|
-| Build command | Different per ecosystem | Always `webdash <task>` |
-| Environment | Manual PATH/env setup | Auto-loaded from profile |
-| Dependencies | Shell scripts or CI-only | `"dependencies": [":build"]` |
-| Cross-project | Complex Makefiles | `"dependencies": ["../lib:build"]` |
-| Discovery | Remember all paths | `webdash --list-registered-configs` |
-| Scheduling | Cron + scattered configs | Inline `"frequency": "daily"` |
-
-### Design Philosophy
-
-1. **JSON configs are self-documenting** — Anyone can read `webdash.config.json` and understand what commands do
-2. **No lock-in** — The configs just run shell commands; you can always run them manually
-3. **Single source of truth** — One profile defines your entire dev environment
-4. **Works alongside existing tools** — WebDash wraps your build system, it doesn't replace it
-
----
-
-## Future Directions
-
-WebDash is designed to grow. Here are potential extensions:
-
-### Near-term Enhancements
-
-- **Parallel task execution** — Run independent dependencies concurrently
-- **Task output caching** — Skip unchanged tasks (like Turborepo/Nx)
-- **Better error reporting** — Structured error output with suggestions
-- **Config validation** — Warn about common mistakes in `webdash.config.json`
-
-### Ecosystem Integration
-
-- **CI/CD templates** — GitHub Actions / GitLab CI configs that use WebDash
-- **IDE plugins** — VS Code extension to run WebDash tasks from the editor
-- **Container support** — Run tasks in Docker containers with consistent environments
-
-### Collaboration Features
-
-- **Shared profiles** — Team-wide `webdash-profile.json` with personal overrides
-- **Remote execution** — Run tasks on build servers via the WebDash server
-- **Dashboard UI** — Web interface showing registered projects, logs, schedules
-
-### Plugin Architecture
-
-The `report-build-state` tool demonstrates the plugin pattern:
-- It's a separate binary that uses the WebDash logging infrastructure
-- Future plugins could add: test runners, deployment tools, notification systems
-
----
-
-## Architecture Overview
+## Project layout
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        User's Shell                              │
-│  $ webdash build                                                 │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      webdash (CLI client)                        │
-│  • Parses webdash.config.json                                    │
-│  • Resolves $.thisDir(), $.rootDir() variables                   │
-│  • Handles dependencies between tasks                            │
-│  • Communicates with server for registration                     │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-              ┌────────────────┼────────────────┐
-              │                │                │
-              ▼                ▼                ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│ libwebdash-     │  │ webdash-server  │  │ webdash-profile │
-│ executor        │  │ (systemd)       │  │ .json           │
-│                 │  │                 │  │                 │
-│ • Config parsing│  │ • Registration  │  │ • Environment   │
-│ • Path resolving│  │ • Scheduling    │  │ • PATH entries  │
-│ • Logging API   │  │ • Background    │  │ • Modules       │
-│ • Substitutions │  │   task runner   │  │ • Custom vars   │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
+webdash.profile.jsonc     # Your environment & projects (machine-specific)
+webdash.config.jsonc      # Commands for the root project
+install.sh               # Entry point — calls .webdash-setup/setup-webdash.sh
+.webdash-setup/          # Setup / bootstrap script
+docs/                    # This documentation
+src/
+    bin/_webdash/        # Core executables (client, server, heartbeat, tests)
+    lib/_webdash/        # Core C++ executor library
+    lib/external/        # Third-party dependencies (cloned during setup)
+    static/              # Standalone web/static projects
+app-persistent/          # Installed binaries, libraries, and persistent data
+app-temporary/           # Logs, caches, and temporary files (safe to delete)
 ```
 
-**Data flow:**
-1. CLI reads `webdash.config.json` and `webdash-profile.json`
-2. Variables like `$.thisDir()` are substituted with actual paths
-3. Dependencies are resolved and executed in order
-4. Server (if running) handles scheduled tasks independently
-
----
-
-## Testing
-
-### Sandboxed Setup Testing
-
-The setup script supports a `--test-setup` flag that creates an isolated test environment:
-
-```bash
-./webdash-setup/setup-webdash.sh --test-setup
-```
-
-This will:
-1. Clone the repository fresh into `app-temporary/_webdash/test-framework-setup/`
-2. Apply your uncommitted changes (tracked files via git diff, plus untracked files)
-3. Run the full setup process in isolation
-4. Skip system modifications (bashrc, systemd)
-
-Use this to verify that setup works correctly before committing changes. The test will fail if:
-- Dependencies are missing from the profile
-- Module repositories have uncommitted changes that are required
-- Build errors occur
-
-On failure, recent errors are displayed from the WebDash log.
+Logs are grouped by project under `app-temporary/logging/<project>/` — see
+[Logging](docs/logging.md).

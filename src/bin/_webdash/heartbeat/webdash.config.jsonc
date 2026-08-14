@@ -13,7 +13,7 @@
                 "make -C build"
             ],
             "dependencies": [
-                "$.rootDir()/src/lib/_webdash/executor/webdash.config.json:build"
+                "$.rootDir()/src/lib/_webdash/executor/webdash.config.jsonc:build"
             ],
             "wdir": "$.thisDir()"
         },

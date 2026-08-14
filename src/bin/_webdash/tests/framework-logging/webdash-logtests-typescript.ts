@@ -5,7 +5,8 @@
  */
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { WebDashProject } = require('/mnt/c/webdash/src/lib/_webdash/executor/bindings/node/project');
+import * as path from 'path';
+const { WebDashProject } = require(path.join(process.env.WEBDASH as string, 'src/lib/_webdash/executor/bindings/node/project'));
 
 const FILENAME: string = 'webdash-logtests-typescript.ts';
 

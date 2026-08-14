@@ -6,7 +6,7 @@ _webdash_completions() {
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # All available flags
-    local flags="--help -h --list-registered-configs --register --unregister --reload-all --ping-server --wsl-forwarded-ports-list --wsl-forwarded-ports-add --wsl-forwarded-ports-remove --reapply-profile --backup-start --backup-restore"
+    local flags="--help -h --list-registered-configs --config.register --config.unregister --config.reload-registered --ping-server --tools.ports.forwarded.list --tools.ports.forwarded.add --tools.ports.forwarded.remove --tools.ports.status --profile.reapply --backup.create --backup.restore --config.validate"
 
     # If current word starts with -, complete flags
     if [[ "$cur" == -* ]]; then
@@ -18,10 +18,10 @@ _webdash_completions() {
     if [[ ${COMP_CWORD} -eq 1 ]]; then
         local commands=""
 
-        # Try to get commands from local webdash.config.json
-        if [[ -f "./webdash.config.json" ]]; then
+        # Try to get commands from local webdash.config.jsonc
+        if [[ -f "./webdash.config.jsonc" ]]; then
             # Extract command names from the config file
-            commands=$(grep -oP '"name"\s*:\s*"\K[^"]+' ./webdash.config.json 2>/dev/null | tr '\n' ' ')
+            commands=$(grep -oP '"name"\s*:\s*"\K[^"]+' ./webdash.config.jsonc 2>/dev/null | tr '\n' ' ')
         fi
 
         # Combine flags and local commands

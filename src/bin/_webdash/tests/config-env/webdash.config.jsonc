@@ -1,0 +1,14 @@
+{
+    ".comment": "Fixture project for test-config-env in the parent tests config: verifies the top-level 'env' field is exported as a real environment variable (setenv), not just text substitution.",
+    "env": {
+        "WEBDASH_TEST_CONFIG_ENV_VAR": "exported-value",
+        "WEBDASH_TEST_CONFIG_ENV_DIR": "$.thisDir()"
+    },
+    "commands": [
+        {
+            "name": "test-config-env-visible",
+            "silent": true,
+            "action": "test \"$WEBDASH_TEST_CONFIG_ENV_VAR\" = \"exported-value\" && test \"$WEBDASH_TEST_CONFIG_ENV_DIR\" = \"$.thisDir()\""
+        }
+    ]
+}

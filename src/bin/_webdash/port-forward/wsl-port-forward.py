@@ -777,7 +777,7 @@ def list_all() -> None:
 
     if ipt_unknown:
         # Don't prompt. Just tell the user how to get full visibility.
-        print("  Note: iptables-firewall is unknown without sudo. Run: sudo webdash --wsl-forwarded-ports-list")
+        print("  Note: iptables-firewall is unknown without sudo. Run: sudo webdash --tools.ports.forwarded.list")
         print()
 
     for port in sorted(ports):

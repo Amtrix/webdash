@@ -6,11 +6,14 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cctype>
+#include <cstring>
 #include <filesystem>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <ctime>
@@ -20,6 +23,103 @@
 #include <tuple>
 using namespace std;
 
+namespace {
+
+string SanitizeLogFilenameComponent(const string& value) {
+    string sanitized;
+    sanitized.reserve(value.size());
+
+    for (unsigned char ch : value) {
+        if (std::isalnum(ch) || ch == '-' || ch == '_') {
+            sanitized.push_back(static_cast<char>(ch));
+        } else {
+            sanitized.push_back('_');
+        }
+    }
+
+    if (sanitized.empty()) {
+        sanitized = "task";
+    }
+
+    constexpr size_t kMaxComponentLength = 80;
+    if (sanitized.size() > kMaxComponentLength) {
+        sanitized.resize(kMaxComponentLength);
+    }
+
+    return sanitized;
+}
+
+filesystem::path GetBackgroundOutputLogPath(const string& taskid) {
+    string task_name = taskid;
+    const auto separator_pos = taskid.find('#');
+    if (separator_pos != string::npos && separator_pos + 1 < taskid.size()) {
+        task_name = taskid.substr(separator_pos + 1);
+    }
+
+    std::ostringstream hash_stream;
+    hash_stream << std::hex << std::hash<string>{}(taskid);
+
+    filesystem::path log_directory = WebDashCore::Get().GetWebDashRootDirectory();
+    log_directory /= WebDashConst::Public::kTemporaryStorageDir;
+    log_directory /= WebDashConst::Public::kLoggingSubdir;
+    log_directory /= _WEBDASH_PROJECT_NAME_;
+    filesystem::create_directories(log_directory);
+
+    const string filename = string(WebDashConst::Public::kLogFilenamePrefix)
+                          + "background."
+                          + SanitizeLogFilenameComponent(task_name)
+                          + "."
+                          + hash_stream.str()
+                          + ".txt";
+
+    return log_directory / filename;
+}
+
+/**
+ * @brief Reads a string field from a task's JSON, if present.
+ *
+ * Unlike the previous blanket `try { ... } catch (...) {}` pattern, this
+ * distinguishes "field absent" (returns nullopt, no log — perfectly normal
+ * for optional fields) from "field present but the wrong type" (logs a clear
+ * ERROR naming the task, field, and the type actually found, then returns
+ * nullopt) — the latter is almost always a config typo/mistake that was
+ * previously being silently ignored.
+ *
+ * @returns The field's string value, or nullopt if absent or wrong type.
+ */
+std::optional<string> GetStringField(const json& task_config, const string& taskid, const char* field) {
+    auto it = task_config.find(field);
+    if (it == task_config.end()) return std::nullopt;
+
+    if (!it->is_string()) {
+        WebDash().Log(WebDashType::LogType::ERR,
+            "T| " + taskid + ": field [" + field + "] must be a string, but found " +
+            string(it->type_name()) + ". Value ignored.");
+        return std::nullopt;
+    }
+
+    return it->get<std::string>();
+}
+
+/**
+ * @brief Same as GetStringField(), but for boolean fields (e.g., "silent": true).
+ */
+std::optional<bool> GetBoolField(const json& task_config, const string& taskid, const char* field) {
+    auto it = task_config.find(field);
+    if (it == task_config.end()) return std::nullopt;
+
+    if (!it->is_boolean()) {
+        WebDash().Log(WebDashType::LogType::ERR,
+            "T| " + taskid + ": field [" + field + "] must be a boolean (true/false), but found " +
+            string(it->type_name()) + ". Value ignored.");
+        return std::nullopt;
+    }
+
+    return it->get<bool>();
+}
+
+} // namespace
+
 
 WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
                                      const string taskid,
@@ -28,11 +128,13 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
     WebDash().Log(WebDashType::LogType::DEBUG, "Loading Task: " + taskid);
 
     this->_config_path = config->GetPath();
+    this->_config_dir = config->GetDirectory().string();
+    this->_config_env = config->GetConfigEnv();
     this->_taskid = taskid;
     this->_is_valid = true;
 
     /**
-     * Parse the webdash.config.json file.
+     * Parse the webdash.config.jsonc file.
      */
 
     try {
@@ -40,208 +142,210 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
         this->_name = name;
     }
     catch (...) {
-        WebDash().Log(WebDashType::LogType::ERR, "T| " + taskid + ": field missing [name].");
+        if (!task_config.contains("name")) {
+            WebDash().Log(WebDashType::LogType::ERR, "T| " + taskid + ": field missing [name].");
+        } else {
+            WebDash().Log(WebDashType::LogType::ERR,
+                "T| " + taskid + ": field [name] must be a string, but found " +
+                string(task_config["name"].type_name()) + ".");
+        }
         _is_valid = false;
         return;
     }
 
     {
         bool has_action = false;
-        try {
-            const string action = task_config["action"].get<std::string>();
-            this->_actions.push_back(action);
+
+        if (auto action = GetStringField(task_config, taskid, "action")) {
+            this->_actions.push_back(*action);
             has_action = true;
         }
-        catch (...){}
 
-        try {
-            json actions = task_config["actions"];
-
-            for (auto action : actions)
-                this->_actions.push_back(action.get<std::string>());
-            has_action = true;
+        if (task_config.contains("actions")) {
+            const json& actions_json = task_config["actions"];
+            if (!actions_json.is_array()) {
+                WebDash().Log(WebDashType::LogType::ERR,
+                    "T| " + taskid + ": field [actions] must be an array of strings, but found " +
+                    string(actions_json.type_name()) + ". Ignored.");
+            } else {
+                // Presence of a valid (even empty) "actions" array counts as
+                // having actions - an empty array is a legitimate pattern for
+                // condition-only tasks that do nothing on success.
+                has_action = true;
+                for (const auto& action_entry : actions_json) {
+                    if (!action_entry.is_string()) {
+                        WebDash().Log(WebDashType::LogType::ERR,
+                            "T| " + taskid + ": an entry in [actions] must be a string, but found " +
+                            string(action_entry.type_name()) + ". Ignored.");
+                        continue;
+                    }
+                    this->_actions.push_back(action_entry.get<std::string>());
+                }
+            }
         }
-        catch (...){}
 
         if (!has_action) {
             _is_valid = false;
-            WebDash().Log(WebDashType::LogType::ERR, "T| " + taskid + ": field missing [actions].");
+            WebDash().Log(WebDashType::LogType::ERR, "T| " + taskid + ": field missing [actions] (need 'action' or 'actions').");
         }
     }
 
     // Parse actions-else (runs when condition is false)
-    try {
-        if (task_config.find("action-else") != task_config.end()) {
-            const string action = task_config["action-else"].get<std::string>();
-            this->_actions_else.push_back(action);
-        }
+    if (auto action = GetStringField(task_config, taskid, "action-else")) {
+        this->_actions_else.push_back(*action);
     }
-    catch (...){}
 
-    try {
-        if (task_config.find("actions-else") != task_config.end()) {
-            json actions = task_config["actions-else"];
-            for (auto action : actions)
-                this->_actions_else.push_back(action.get<std::string>());
-        }
-    }
-    catch (...){}
-
-    try {
-        json dependencies = task_config["dependencies"];
-
-        for (const auto& dependency : dependencies) {
-            if (dependency.is_string()) {
-                // Simple string dependency: "path/to/project:task"
-                string dep_str = dependency.get<std::string>();
-
-                // Strip legacy ? suffix (now always resolves by default)
-                if (!dep_str.empty() && dep_str.back() == '?') {
-                    dep_str = dep_str.substr(0, dep_str.size() - 1);
+    if (task_config.contains("actions-else")) {
+        const json& actions_json = task_config["actions-else"];
+        if (!actions_json.is_array()) {
+            WebDash().Log(WebDashType::LogType::ERR,
+                "T| " + taskid + ": field [actions-else] must be an array of strings, but found " +
+                string(actions_json.type_name()) + ". Ignored.");
+        } else {
+            for (const auto& action_entry : actions_json) {
+                if (!action_entry.is_string()) {
+                    WebDash().Log(WebDashType::LogType::ERR,
+                        "T| " + taskid + ": an entry in [actions-else] must be a string, but found " +
+                        string(action_entry.type_name()) + ". Ignored.");
+                    continue;
                 }
-                this->_dependencies.emplace_back(dep_str);
-            } else if (dependency.is_object()) {
-                string path = "";
-                string git = "";
-                string branch = "";
-                string run_task = "";
-
-                if (dependency.contains(WebDashConst::Public::kModuleFieldPath)) {
-                    path = dependency[WebDashConst::Public::kModuleFieldPath].get<std::string>();
-                }
-                if (dependency.contains(WebDashConst::Public::kModuleFieldGit)) {
-                    git = dependency[WebDashConst::Public::kModuleFieldGit].get<std::string>();
-                }
-                if (dependency.contains(WebDashConst::Public::kModuleFieldBranch)) {
-                    branch = dependency[WebDashConst::Public::kModuleFieldBranch].get<std::string>();
-                }
-                if (dependency.contains(WebDashConst::Public::kModuleFieldRun)) {
-                    run_task = dependency[WebDashConst::Public::kModuleFieldRun].get<std::string>();
-                }
-
-                // Construct the full path:task string
-                string full_path = path;
-                if (!run_task.empty()) {
-                    full_path += ":" + run_task;
-                }
-
-                if (!git.empty()) {
-                    // Inline module with git
-                    this->_dependencies.emplace_back(full_path, git, branch);
-                } else {
-                    // Simple path dependency
-                    this->_dependencies.emplace_back(full_path);
-                }
+                this->_actions_else.push_back(action_entry.get<std::string>());
             }
         }
     }
-    catch (...)
-    {
-        WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": field missing [dependencies].");
+
+    if (task_config.contains("dependencies")) {
+        const json& dependencies = task_config["dependencies"];
+
+        if (!dependencies.is_array()) {
+            WebDash().Log(WebDashType::LogType::ERR,
+                "T| " + taskid + ": field [dependencies] must be an array, but found " +
+                string(dependencies.type_name()) + ". Ignored.");
+        } else {
+            try {
+                for (const auto& dependency : dependencies) {
+                    if (dependency.is_string()) {
+                        // Simple string dependency: "path/to/project:task"
+                        string dep_str = dependency.get<std::string>();
+
+                        // Strip legacy ? suffix (now always resolves by default)
+                        if (!dep_str.empty() && dep_str.back() == '?') {
+                            dep_str = dep_str.substr(0, dep_str.size() - 1);
+                        }
+                        this->_dependencies.emplace_back(dep_str);
+                    } else if (dependency.is_object()) {
+                        auto read_dep_field = [&](const char* key) -> string {
+                            if (!dependency.contains(key)) return "";
+                            if (!dependency[key].is_string()) {
+                                WebDash().Log(WebDashType::LogType::ERR,
+                                    "T| " + taskid + ": dependency field [" + key + "] must be a string, but found " +
+                                    string(dependency[key].type_name()) + ". Ignored.");
+                                return "";
+                            }
+                            return dependency[key].get<std::string>();
+                        };
+
+                        string path = read_dep_field(WebDashConst::Public::kModuleFieldPath);
+                        string git = read_dep_field(WebDashConst::Public::kModuleFieldGit);
+                        string branch = read_dep_field(WebDashConst::Public::kModuleFieldBranch);
+                        string run_task = read_dep_field(WebDashConst::Public::kModuleFieldRun);
+
+                        // Construct the full path:task string
+                        string full_path = path;
+                        if (!run_task.empty()) {
+                            full_path += ":" + run_task;
+                        }
+
+                        if (!git.empty()) {
+                            // Inline module with git
+                            this->_dependencies.emplace_back(full_path, git, branch);
+                        } else {
+                            // Simple path dependency
+                            this->_dependencies.emplace_back(full_path);
+                        }
+                    } else {
+                        WebDash().Log(WebDashType::LogType::ERR,
+                            "T| " + taskid + ": an entry in [dependencies] must be a string or object, but found " +
+                            string(dependency.type_name()) + ". Ignored.");
+                    }
+                }
+            }
+            catch (const std::exception& e) {
+                WebDash().Log(WebDashType::LogType::ERR, "T| " + taskid + ": failed to parse [dependencies]: " + string(e.what()));
+            }
+        }
     }
 
-
-    try {
-        const string frequency = task_config["frequency"].get<std::string>();
-        this->_frequency = frequency;
-    }
-    catch (...)
-    {
+    if (auto frequency = GetStringField(task_config, taskid, "frequency")) {
+        this->_frequency = *frequency;
+    } else if (!task_config.contains("frequency")) {
         WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": field missing [frequency].");
     }
 
-    try {
-        const string when = task_config["when"].get<std::string>();
-        this->_when_to_execute = when;
-    }
-    catch (...) {
+    if (auto when = GetStringField(task_config, taskid, "when")) {
+        this->_when_to_execute = *when;
+    } else if (!task_config.contains("when")) {
         WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": field missing [when] (remove this?).");
     }
 
-    try {
-        const string wdir = task_config["wdir"].get<std::string>();
-        this->_wdir = wdir;
-    }
-    catch (...)
-    {
+    if (auto wdir = GetStringField(task_config, taskid, "wdir")) {
+        this->_wdir = *wdir;
+    } else if (!task_config.contains("wdir")) {
         WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": no working directory (wdir) given.");
     }
 
-    try {
-        const bool continue_on_error = task_config["continue_on_error"].get<bool>();
-        this->_continue_on_error = continue_on_error;
+    if (auto continue_on_error = GetBoolField(task_config, taskid, "continue_on_error")) {
+        this->_continue_on_error = *continue_on_error;
     }
-    catch (...){}
 
-    try {
-        const bool val = task_config["notify-dashboard"].get<bool>();
-        this->_notify_dashboard = val;
-    }
-    catch (...)
-    {
+    if (auto val = GetBoolField(task_config, taskid, "notify-dashboard")) {
+        this->_notify_dashboard = *val;
+    } else if (!task_config.contains("notify-dashboard")) {
         WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": dashboard notification not specified.");
     }
 
-    try {
-        const bool val = task_config["allow-execution-as-ancestor"].get<bool>();
-        this->_allow_execution_as_ancestor = val;
-    }
-    catch (...) {
-        WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": dashboard notification not specified.");
+    if (auto val = GetBoolField(task_config, taskid, "allow-execution-as-ancestor")) {
+        this->_allow_execution_as_ancestor = *val;
+    } else if (!task_config.contains("allow-execution-as-ancestor")) {
+        WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": allow-execution-as-ancestor not specified.");
     }
 
-    try {
-        const bool val = task_config["background"].get<bool>();
-        this->_background = val;
-    }
-    catch (...) {}
-
-    try {
-        const string condition = task_config["condition"].get<std::string>();
-        this->_condition = condition;
-    }
-    catch (...) {
-        // No condition specified - command runs unconditionally
+    if (auto val = GetBoolField(task_config, taskid, "background")) {
+        this->_background = *val;
     }
 
-    try {
-        const string user = task_config["user"].get<std::string>();
-        this->_user = user;
+    if (auto condition = GetStringField(task_config, taskid, "condition")) {
+        this->_condition = *condition;
     }
-    catch (...) {
-        // No user specified - run as current user
-    }
+    // No condition specified - command runs unconditionally
 
-    try {
-        this->_silent = task_config["silent"].get<bool>();
+    if (auto user = GetStringField(task_config, taskid, "user")) {
+        this->_user = *user;
     }
-    catch (...) {
-        // No silent specified - default to verbose output
-    }
+    // No user specified - run as current user
 
-    try {
-        const string test_case = task_config["test-case"].get<std::string>();
-        this->_test_case = test_case;
+    if (auto silent = GetBoolField(task_config, taskid, "silent")) {
+        this->_silent = *silent;
     }
-    catch (...) {
-        // No test-case specified
-    }
+    // No silent specified - default to verbose output
 
-    try {
-        const string style = task_config["executionStyle"].get<std::string>();
-        if (style == "stopOnFirstSuccess") {
+    if (auto test_case = GetStringField(task_config, taskid, "test-case")) {
+        this->_test_case = *test_case;
+    }
+    // No test-case specified
+
+    if (auto style = GetStringField(task_config, taskid, "executionStyle")) {
+        if (*style == "stopOnFirstSuccess") {
             this->_execution_style = ExecutionStyle::StopOnFirstSuccess;
-        } else if (style == "neverStop") {
+        } else if (*style == "neverStop") {
             this->_execution_style = ExecutionStyle::NeverStop;
-        } else if (style == "stopOnFirstFailure") {
+        } else if (*style == "stopOnFirstFailure") {
             this->_execution_style = ExecutionStyle::StopOnFirstFailure;
         } else {
-            WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": unknown executionStyle '" + style + "', using default.");
+            WebDash().Log(WebDashType::LogType::WARN, "T| " + taskid + ": unknown executionStyle '" + *style + "', using default.");
         }
     }
-    catch (...) {
-        // No executionStyle specified - use default (StopOnFirstFailure)
-    }
+    // No executionStyle specified - use default (StopOnFirstFailure)
 
     // Parse exit-actions: array of objects mapping exit codes to action lists
     // Format: [{"0": ["action1", "action2"]}, {"*": ["on-failure-action"], "return": 0}]
@@ -302,20 +406,26 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
     for (auto& action : _actions) {
         action = WebDashUtils::ApplySubstitutions(action, defs);
         action = WebDashUtils::ResolvePortReferences(action, profile_entries);
+        action = WebDashUtils::ResolveEnvReferences(action);
     }
 
     for (auto& action : _actions_else) {
         action = WebDashUtils::ApplySubstitutions(action, defs);
         action = WebDashUtils::ResolvePortReferences(action, profile_entries);
+        action = WebDashUtils::ResolveEnvReferences(action);
     }
 
     for (auto& dependency : _dependencies) {
         dependency.path = WebDashUtils::ApplySubstitutions(dependency.path, defs);
+        dependency.path = WebDashUtils::ResolvePortReferences(dependency.path, profile_entries);
+        dependency.path = WebDashUtils::ResolveEnvReferences(dependency.path);
         // git and branch don't need substitution (they're external URLs)
     }
 
     if (_wdir.has_value()) {
         _wdir = WebDashUtils::ApplySubstitutions(_wdir.value(), defs);
+        _wdir = WebDashUtils::ResolvePortReferences(_wdir.value(), profile_entries);
+        _wdir = WebDashUtils::ResolveEnvReferences(_wdir.value());
     }
 
     // Apply substitutions to exit-actions
@@ -323,6 +433,7 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
         for (auto& action : entry.actions) {
             action = WebDashUtils::ApplySubstitutions(action, defs);
             action = WebDashUtils::ResolvePortReferences(action, profile_entries);
+            action = WebDashUtils::ResolveEnvReferences(action);
         }
     }
 
@@ -330,6 +441,7 @@ WebDashConfigTask::WebDashConfigTask(WebDashConfig* config,
     if (_test_case.has_value()) {
         _test_case = WebDashUtils::ApplySubstitutions(_test_case.value(), defs);
         _test_case = WebDashUtils::ResolvePortReferences(_test_case.value(), profile_entries);
+        _test_case = WebDashUtils::ResolveEnvReferences(_test_case.value());
     }
 
     // Note: _condition is evaluated at runtime, not substituted here
@@ -431,6 +543,27 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
     WebDash().Log(WebDashType::LogType::DEBUG, "Executing: " + this->_taskid);
     WebDash().Log(WebDashType::LogType::DEBUG, "    => " + action);
 
+    std::optional<filesystem::path> background_output_log;
+    if (_background) {
+        try {
+            auto log_path = GetBackgroundOutputLogPath(this->_taskid);
+            int log_fd = open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+            if (log_fd >= 0) {
+                close(log_fd);
+                background_output_log = log_path;
+                WebDash().Log(WebDashType::LogType::INFO,
+                    "Background task output for " + this->_taskid + " will be appended to: " + log_path.string());
+            } else {
+                WebDash().Log(WebDashType::LogType::WARN,
+                    "Failed to open background task output log for " + this->_taskid + ": " + strerror(errno));
+            }
+        }
+        catch (const std::exception& e) {
+            WebDash().Log(WebDashType::LogType::WARN,
+                "Failed to prepare background task output log for " + this->_taskid + ": " + string(e.what()));
+        }
+    }
+
     if (config.verbose) {
         cout << "Forking... " << endl;
     }
@@ -478,12 +611,27 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
             }
             // Grandchild continues below to exec the command
 
-            // Redirect stdin/stdout/stderr to /dev/null for background process
+            // Detach stdin, but keep stdout/stderr in a task-specific WebDash log file.
             int devnull = open("/dev/null", O_RDWR);
             if (devnull >= 0) {
                 dup2(devnull, STDIN_FILENO);
+            }
+
+            int output_fd = -1;
+            if (background_output_log.has_value()) {
+                output_fd = open(background_output_log.value().c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+            }
+
+            if (output_fd >= 0) {
+                dup2(output_fd, STDOUT_FILENO);
+                dup2(output_fd, STDERR_FILENO);
+                if (output_fd > STDERR_FILENO) close(output_fd);
+            } else if (devnull >= 0) {
                 dup2(devnull, STDOUT_FILENO);
                 dup2(devnull, STDERR_FILENO);
+            }
+
+            if (devnull >= 0) {
                 if (devnull > STDERR_FILENO) close(devnull);
             }
         }
@@ -518,17 +666,37 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
         }
 
         /**
-         * Change the CWD if required by the task.
+         * Export this task's config-level "env" entries (see
+         * docs/configuration.md#environment-variables) as real environment
+         * variables for the process about to be exec'd - the same mechanism
+         * as the profile's "env", just scoped to this config instead of
+         * baked into the shell init script. Applied here (in the forked
+         * child, right before exec) rather than in the parent process, so
+         * there's no risk of leaking into unrelated sibling tasks/configs.
+         */
+        for (const auto& [key, value] : _config_env) {
+            setenv(key.c_str(), value.c_str(), 1);
+        }
+
+        /**
+         * Change the CWD to the task's working directory. If `wdir` wasn't
+         * explicitly set, default to the config file's own directory (see
+         * docs/configuration.md#working-directory) rather than silently
+         * inheriting whatever cwd the calling webdash process happened to be
+         * in, which produced results that depended on the invoking shell's
+         * location (e.g., a plain "webdash :sometask" action run as part of
+         * another task's actions).
          */
 
-        if (_wdir.has_value()) {
-            if (chdir(_wdir.value().c_str()) != 0) {
+        {
+            const string effective_wdir = _wdir.has_value() ? _wdir.value() : _config_dir;
+            if (chdir(effective_wdir.c_str()) != 0) {
                 perror ("WebDashConfigTask::Run!chdir: Specified work directory does not exist?");
-                WebDash().Log(WebDashType::LogType::ERR, "Failed to set cwd to: " + _wdir.value());
+                WebDash().Log(WebDashType::LogType::ERR, "Failed to set cwd to: " + effective_wdir);
                 exit(1);
             }
 
-            WebDash().Log(WebDashType::LogType::DEBUG, "Working directory set to: " + _wdir.value());
+            WebDash().Log(WebDashType::LogType::DEBUG, "Working directory set to: " + effective_wdir);
         }
 
         // Always use bash -c for consistent shell behavior (supports redirects, pipes, globs, etc.)
@@ -636,7 +804,10 @@ WebDashType::RunReturn WebDashConfigTask::Run(WebDashType::RunConfig config, std
 
     if (_background) {
         // Background process - first child already exited, grandchild is running detached
-        retval.return_code = 0;
+        retval.return_code = wpid == pid && WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        if (retval.return_code == 0 && background_output_log.has_value() && !_silent) {
+            cout << "Background task started. Output: " << background_output_log.value() << endl;
+        }
         return retval;
     }
 
@@ -1181,6 +1352,13 @@ bool WebDashConfigTask::EvaluateCondition() {
                         return false;
                     }
                 }
+            }
+            // The static file server has a sensible built-in default (see
+            // WebDashConst::Public::kDefaultStaticFileServerPort) so profiles
+            // aren't required to define it.
+            if (!found && port_id == WebDashConst::Public::kProfilePortStaticFileServer) {
+                port = WebDashConst::Public::kDefaultStaticFileServerPort;
+                found = true;
             }
             if (!found) {
                 WebDash().Log(WebDashType::LogType::ERR, "Port identifier not found in profile: " + port_id);

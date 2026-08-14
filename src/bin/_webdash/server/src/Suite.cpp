@@ -72,8 +72,9 @@ static std::optional<std::string> try_read_project_name_from_config(const std::s
     try {
         std::ifstream in(config_path);
         if (!in.is_open()) return std::nullopt;
-        json j;
-        in >> j;
+        // Accept JSONC ("//"/"/* */" comments, trailing commas), same as the
+        // runtime config parser.
+        json j = json::parse(in, nullptr, true, true, true);
         if (!j.is_object()) return std::nullopt;
         if (!j.contains("project-name")) return std::nullopt;
         const auto& v = j["project-name"];
@@ -90,8 +91,9 @@ static std::optional<int> try_read_priority_from_config(const std::string& confi
     try {
         std::ifstream in(config_path);
         if (!in.is_open()) return std::nullopt;
-        json j;
-        in >> j;
+        // Accept JSONC ("//"/"/* */" comments, trailing commas), same as the
+        // runtime config parser.
+        json j = json::parse(in, nullptr, true, true, true);
         if (!j.is_object()) return std::nullopt;
         if (!j.contains("priority")) return std::nullopt;
         const auto& v = j["priority"];

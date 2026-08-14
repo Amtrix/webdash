@@ -269,7 +269,18 @@ bool HttpFileServer::HandleClient(int client_fd) {
 
     // Resolve the URL path to a local file
     string filepath;
-    if (!ResolvePath(url_path, filepath)) {
+    bool needs_slash_redirect = false;
+    if (!ResolvePath(url_path, filepath, needs_slash_redirect)) {
+        if (needs_slash_redirect) {
+            string location = url_path + "/";
+            string response = "HTTP/1.1 301 Moved Permanently\r\n" + cors_headers +
+                             "Location: " + location + "\r\n"
+                             "Content-Length: 0\r\n"
+                             "\r\n";
+            send(client_fd, response.c_str(), response.size(), 0);
+            return false;
+        }
+
         string body = "404 Not Found";
         string response = "HTTP/1.1 404 Not Found\r\n" + cors_headers +
                          "Content-Type: text/plain\r\n"
@@ -514,7 +525,9 @@ void HttpFileServer::ProxyWebSocket(int client_fd, const std::string& original_r
 }
 
 
-bool HttpFileServer::ResolvePath(const string& url_path, string& out_filepath) {
+bool HttpFileServer::ResolvePath(const string& url_path, string& out_filepath, bool& needs_slash_redirect) {
+    needs_slash_redirect = false;
+
     // URL must start with /
     if (url_path.empty() || url_path[0] != '/') return false;
 
@@ -562,6 +575,15 @@ bool HttpFileServer::ResolvePath(const string& url_path, string& out_filepath) {
                     if (fs::is_directory(canonical)) {
                         fs::path index_path = canonical / "index.html";
                         if (fs::is_regular_file(index_path)) {
+                            // A directory's index.html defines relative links (href="styles.css",
+                            // <script src="app.js">, etc.) against the *directory's* URL. If the
+                            // requester's URL doesn't end in '/', the browser would instead resolve
+                            // those links against the parent directory - breaking every relative
+                            // asset. Ask the caller to redirect instead of serving the file here.
+                            if (url_path.back() != '/') {
+                                needs_slash_redirect = true;
+                                return false;
+                            }
                             out_filepath = index_path.string();
                             return true;
                         }

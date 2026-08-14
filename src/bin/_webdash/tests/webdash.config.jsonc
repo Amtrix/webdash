@@ -49,6 +49,12 @@
                 "webdash condition-port-used",
                 "webdash condition-port-used-fail",
                 ":failed-command",
+                ":test-field-type-validation",
+                ":test-env-and-var-substitutions",
+                ":test-config-env",
+                ":test-jsonc-support",
+                ":test-empty-actions-array-is-valid",
+                ":test-missing-actions-is-invalid",
                 "./clonedby-profile-dep:all",
                 ":test-logging-all",
                 ":test-invalid-user-via-server"
@@ -200,6 +206,88 @@
             "silent": true,
             "actions": [
                 "./server-tests:test-invalid-user-via-server"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            ".comment": "Regression coverage for the type-checked field parsing in WebDashConfigTask. Fixture tasks live in ./field-validation.",
+            "name": "test-field-type-validation",
+            "silent": true,
+            "test-case": "Malformed field types are ignored (task still runs) with a clear error logged, not silently swallowed.",
+            "actions": [
+                "./field-validation:task-with-bad-types",
+                "./field-validation:task-with-bad-silent",
+                "grep -qF 'task-with-bad-types: field [wdir] must be a string, but found number' $.rootDir()/app-temporary/logging/webdash-client/logging.error.txt",
+                "grep -qF 'task-with-bad-types: field [background] must be a boolean (true/false), but found number' $.rootDir()/app-temporary/logging/webdash-client/logging.error.txt",
+                "grep -qF 'task-with-bad-types: an entry in [dependencies] must be a string or object, but found number' $.rootDir()/app-temporary/logging/webdash-client/logging.error.txt",
+                "grep -qF 'task-with-bad-silent: field [silent] must be a boolean (true/false), but found string' $.rootDir()/app-temporary/logging/webdash-client/logging.error.txt"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            ".comment": "Regression coverage for $.env()/$.var() substitutions. Fixture tasks/vars live in ./field-validation.",
+            "name": "test-env-and-var-substitutions",
+            "silent": true,
+            "test-case": "$.env() (with/without fallback) and $.var() (incl. inside wdir) resolve correctly.",
+            "actions": [
+                "webdash ./field-validation:test-env-substitution-default",
+                "FIELD_VALIDATION_TEST_VAR=actual-value webdash ./field-validation:test-env-substitution-actual",
+                "webdash ./field-validation:test-var-substitution",
+                "webdash ./field-validation:test-var-in-wdir"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            ".comment": "Regression coverage for the config-level 'env' field (real setenv() export, not text substitution). Fixture lives in ./config-env.",
+            "name": "test-config-env",
+            "silent": true,
+            "test-case": "Config-level 'env' entries are exported as real environment variables for that config's tasks.",
+            "actions": [
+                "./config-env:test-config-env-visible"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            ".comment": "Regression coverage for JSONC support (comments + trailing commas). Fixture lives in ./jsonc-fixture and is itself written using JSONC syntax.",
+            "name": "test-jsonc-support",
+            "silent": true,
+            "test-case": "A config using \"//\"/\"/* */\" comments and trailing commas parses and runs correctly.",
+            "actions": [
+                "./jsonc-fixture:test-jsonc-parses-and-runs"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            ".comment": "Regression test: an empty 'actions': [] array (used by condition-only tasks) must remain a valid, no-op action list - not be silently rejected as 'missing actions'.",
+            "name": "test-empty-actions-array-is-valid",
+            "silent": true,
+            "test-case": "A task with an empty 'actions' array plus a condition is treated as valid.",
+            "actions": [
+                "./field-validation:task-with-empty-actions"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            ".comment": "A task truly missing both 'action' and 'actions' must still be rejected as invalid.",
+            "name": "test-missing-actions-is-invalid",
+            "silent": true,
+            "test-case": "A task missing both 'action' and 'actions' is correctly rejected as invalid.",
+            "actions": [
+                "./field-validation:task-missing-actions"
+            ],
+            "exit-actions": [
+                {
+                    "0": [
+                        "echo 'Test [failed]: invalid task unexpectedly ran/succeeded.'"
+                    ],
+                    "return": 1
+                },
+                {
+                    "*": [
+                        "echo 'Test [passed]: invalid task correctly rejected.'"
+                    ],
+                    "return": 0
+                }
             ],
             "wdir": "$.thisDir()"
         },

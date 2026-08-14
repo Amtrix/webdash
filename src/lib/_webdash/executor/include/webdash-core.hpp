@@ -78,7 +78,7 @@ class WebDashCore {
 
         /**
          *  @brief Returns the filename of WebDash's root profile JSON file.
-         *  @returns The profile filename (e.g., "webdash-profile.json").
+         *  @returns The profile filename (e.g., "webdash.profile.jsonc").
          */
         static constexpr const char* GetRootProfileFilename() { return WebDashConst::Public::kRootProfileFilename; }
 
@@ -92,7 +92,7 @@ class WebDashCore {
 
         /**
          *  @brief Returns the filename of per-project WebDash config files.
-         *  @returns The project config filename (e.g., "webdash.config.json").
+         *  @returns The project config filename (e.g., "webdash.config.jsonc").
          */
         static constexpr const char* GetProjectConfigFilename() { return WebDashConst::Public::kProjectConfigFilename; }
 

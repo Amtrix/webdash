@@ -12,7 +12,7 @@
             "silent": true,
             "test-case": "Server logs 'User not found' for invalid user in scheduled task.",
             "actions": [
-                "webdash --server-process-once $.thisDir()/webdash.config.json",
+                "webdash --server-process-once $.thisDir()/webdash.config.jsonc",
                 "grep 'User not found: nonexistent_test_user_xyz' $.rootDir()/app-temporary/logging/webdash-server/logging.error.txt | tail -1"
             ],
             "wdir": "$.thisDir()"

@@ -201,4 +201,21 @@ namespace WebDashUtils {
     string ResolvePortReferences(
         const string& source,
         const vector<JsonEntry>& profile_entries);
+
+    /**
+     * @brief Resolves $.env(NAME) and $.env(NAME, default) patterns in a
+     *        string by reading the actual OS process environment.
+     *
+     *        $.env(NAME) expands to the value of environment variable NAME,
+     *        or is left untouched if NAME isn't set (so a missing required
+     *        variable is obvious rather than silently becoming an empty
+     *        string).
+     *
+     *        $.env(NAME, default) expands to the value of NAME if set,
+     *        otherwise to the literal fallback text after the comma.
+     *
+     * @param source The string containing $.env() patterns to resolve.
+     * @returns The string with $.env() patterns replaced with resolved values.
+     **/
+    string ResolveEnvReferences(const string& source);
 }

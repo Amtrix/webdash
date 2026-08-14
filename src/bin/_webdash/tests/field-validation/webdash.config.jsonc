@@ -1,0 +1,57 @@
+{
+    ".comment": "Fixture project for test-field-type-validation in the parent tests config. Every task here intentionally has a malformed field so we can assert the executor logs a clear error instead of silently ignoring or crashing.",
+    "vars": {
+        "greeting": "hello-from-vars",
+        "fixture-dir": "$.thisDir()"
+    },
+    "commands": [
+        {
+            "name": "test-env-substitution-default",
+            "silent": true,
+            "action": "test \"$.env(FIELD_VALIDATION_TEST_VAR, fallback-ok)\" = \"fallback-ok\""
+        },
+        {
+            "name": "test-env-substitution-actual",
+            "silent": true,
+            "action": "test \"$.env(FIELD_VALIDATION_TEST_VAR)\" = \"actual-value\""
+        },
+        {
+            "name": "test-var-substitution",
+            "silent": true,
+            "action": "test \"$.var(greeting)\" = \"hello-from-vars\""
+        },
+        {
+            "name": "test-var-in-wdir",
+            "silent": true,
+            "wdir": "$.var(fixture-dir)",
+            "action": "test -f ./webdash.config.jsonc"
+        },
+        {
+            "name": "task-with-bad-types",
+            "action": "echo ran-ok",
+            "wdir": 123,
+            "background": 1,
+            "dependencies": [
+                42
+            ]
+        },
+        {
+            "name": "task-with-bad-silent",
+            "action": "echo ran-ok",
+            "silent": "yes"
+        },
+        {
+            "name": "task-with-empty-actions",
+            "silent": true,
+            "condition": "$.isPortUnused(65535)",
+            "actions": [],
+            "actions-else": [
+                "exit 1"
+            ]
+        },
+        {
+            "name": "task-missing-actions",
+            "silent": true
+        }
+    ]
+}

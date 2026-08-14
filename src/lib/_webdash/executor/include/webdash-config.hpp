@@ -120,6 +120,17 @@ public:
      */
     std::filesystem::path GetDirectory() const { return _config_filepath.parent_path(); }
 
+    /**
+     * @brief Returns this config's own "env" entries (see
+     *        docs/configuration.md#environment-variables), already resolved
+     *        (substitutions applied). These get exported via setenv() for
+     *        any process that runs one of this config's tasks - the same
+     *        mechanism as the profile's "env", just scoped to this config
+     *        instead of the whole shell session.
+     * @returns List of (name, value) pairs.
+     */
+    const vector<pair<string, string>>& GetConfigEnv() const { return _config_env; }
+
 
 private:
 
@@ -171,6 +182,17 @@ private:
     // Identifier used for config-scoped storage substitutions.
     // Priority: top-level "widget-identifier" -> config directory name.
     string _project_identifier;
+
+    // Project-local named constants declared in this config's top-level
+    // "vars" object, pre-resolved to {"$.var(name)", value} substitution
+    // pairs (values may themselves use $.rootDir()/$.thisDir()/$.env(), which
+    // are resolved once when the config is loaded).
+    vector<SubstitutionPair> _local_vars;
+
+    // This config's top-level "env" object: real environment variables
+    // exported (via setenv()) for any process that runs one of this config's
+    // tasks. Values are pre-resolved (substitutions applied) when loaded.
+    vector<pair<string, string>> _config_env;
 };
 
 
@@ -182,7 +204,7 @@ private:
  *        1) If the file is not a directory, consider it as the configuration
  *           file.
  *
- *        2) If the file is a directory, check it for the `webdash.config.json`
+ *        2) If the file is a directory, check it for the `webdash.config.jsonc`
  *           file. If `check_ancestry` is `true`, also check all directories in
  *           the ancestry chain.
  *

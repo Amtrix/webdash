@@ -40,15 +40,15 @@
  * Each value corresponds to the wire prefix used in WebSocket messages.
  */
 enum class IpcCommand {
-    REGISTER,
-    UNREGISTER,
+    CONFIG_REGISTER,
+    CONFIG_UNREGISTER,
     RELOAD,
     LIST_REGISTERED_CONFIGS,
     PING,
     PROCESS_ONCE,
     RECENT_ACTIONS,
     RUN_TASK,
-    WSL_FORWARDED_PORTS_LIST,
+    TOOLS_PORTS_FORWARDED_LIST,
     WRITE_CONFIG,
     WIDGET_COMMAND,
     OPEN_WIDGET_WINDOW,
@@ -80,16 +80,16 @@ struct IpcRegistry {
             // ──────────────────────────────────────────────────────────────
             // id                               wire                        reply?  description
             // ──────────────────────────────────────────────────────────────
-            { IpcCommand::REGISTER,              "register",                 false,  "Register a config for periodic execution" },
-            { IpcCommand::UNREGISTER,            "unregister",               true,   "Unregister a config from tracking" },
+            { IpcCommand::CONFIG_REGISTER,              "register",                 false,  "Register a config for periodic execution" },
+            { IpcCommand::CONFIG_UNREGISTER,            "unregister",               true,   "Unregister a config from tracking" },
             { IpcCommand::RELOAD,                "reload",                   true,   "Reload all registered configs" },
             { IpcCommand::LIST_REGISTERED_CONFIGS,"list-registered-configs", true,   "List all registered config paths" },
             { IpcCommand::PING,                  "ping",                     true,   "Health-check the server" },
             { IpcCommand::PROCESS_ONCE,          "process-once",             true,   "Immediately run a config's scheduled tasks" },
             { IpcCommand::RECENT_ACTIONS,        "recent-actions",           true,   "Get the most recent server-executed actions" },
             { IpcCommand::RUN_TASK,               "run-task",                  true,   "Run a specific task by config path and name" },
-            { IpcCommand::WSL_FORWARDED_PORTS_LIST,"wsl-forwarded-ports-list", true,   "List configured WSL forwarded ports (server-side, no client sudo)" },
-            { IpcCommand::WRITE_CONFIG,           "write-config",             true,   "Write a registered webdash.config.json (portal editor)" },
+            { IpcCommand::TOOLS_PORTS_FORWARDED_LIST,"wsl-forwarded-ports-list", true,   "List configured WSL forwarded ports (server-side, no client sudo)" },
+            { IpcCommand::WRITE_CONFIG,           "write-config",             true,   "Write a registered webdash.config.jsonc (portal editor)" },
             { IpcCommand::WIDGET_COMMAND,         "widget-command",           true,   "Execute a widget-command and return its output" },
             { IpcCommand::OPEN_WIDGET_WINDOW,     "open-widget-window",       true,   "Launch a widget in a native app-style browser window" },
         };

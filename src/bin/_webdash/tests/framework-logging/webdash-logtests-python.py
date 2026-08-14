@@ -5,7 +5,8 @@ Tests the webdash Python logging API with efficient file handling.
 """
 
 import sys
-sys.path.insert(0, '/mnt/c/webdash/src/lib/_webdash/executor/bindings/python')
+import os
+sys.path.insert(0, os.path.join(os.environ["WEBDASH"], "src/lib/_webdash/executor/bindings/python"))
 
 from webdash.log import WebDashProject
 

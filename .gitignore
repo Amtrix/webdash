@@ -10,11 +10,14 @@
 /src/lib/*
 !/src/lib/_webdash/
 
-!/src/bin/_webdash/client/webdash.config.json
-!/webdash-setup/
-!/webdash-setup/setup-webdash.sh
-!/webdash-setup/webdash-profile.default.json
-!/webdash-setup/WebDash.xml
+!/src/bin/_webdash/client/webdash.config.jsonc
+!/webdash.config.jsonc
+!/install.sh
+!/.webdash-setup/
+!/.webdash-setup/setup-webdash.sh
+!/.webdash-setup/webdash.profile.default.jsonc
+!/.github/
+!/.github/copilot-instructions.md
 !/.gitignore
 
 # Temporary files (logs, caches, test artifacts)
