@@ -40,8 +40,8 @@
  * Each value corresponds to the wire prefix used in WebSocket messages.
  */
 enum class IpcCommand {
-    CONFIG_REGISTER,
-    CONFIG_UNREGISTER,
+    CONFIG_REGISTER_ADD,
+    CONFIG_REGISTER_REMOVE,
     RELOAD,
     LIST_REGISTERED_CONFIGS,
     PING,
@@ -80,8 +80,8 @@ struct IpcRegistry {
             // ──────────────────────────────────────────────────────────────
             // id                               wire                        reply?  description
             // ──────────────────────────────────────────────────────────────
-            { IpcCommand::CONFIG_REGISTER,              "register",                 false,  "Register a config for periodic execution" },
-            { IpcCommand::CONFIG_UNREGISTER,            "unregister",               true,   "Unregister a config from tracking" },
+            { IpcCommand::CONFIG_REGISTER_ADD,              "register",                 false,  "Register a config for periodic execution" },
+            { IpcCommand::CONFIG_REGISTER_REMOVE,            "unregister",               true,   "Unregister a config from tracking" },
             { IpcCommand::RELOAD,                "reload",                   true,   "Reload all registered configs" },
             { IpcCommand::LIST_REGISTERED_CONFIGS,"list-registered-configs", true,   "List all registered config paths" },
             { IpcCommand::PING,                  "ping",                     true,   "Health-check the server" },

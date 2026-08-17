@@ -1,0 +1,9 @@
+{
+    "project-location": "$.rootDir()/app-temporary/test-module-add-dest",
+    "commands": [
+        {
+            "name": "noop",
+            "action": "true"
+        }
+    ]
+}

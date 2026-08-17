@@ -6,7 +6,7 @@ _webdash_completions() {
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # All available flags
-    local flags="--help -h --list-registered-configs --config.register --config.unregister --config.reload-registered --ping-server --tools.ports.forwarded.list --tools.ports.forwarded.add --tools.ports.forwarded.remove --tools.ports.status --profile.reapply --backup.create --backup.restore --config.validate"
+    local flags="--help -h --config.register.list --config.register.add --config.register.remove --config.register.reload --ping-server --tools.ports.forwarded.list --tools.ports.forwarded.add --tools.ports.forwarded.remove --tools.ports.status --profile.reapply --profile.modules.add --backup.create --backup.restore --config.validate"
 
     # If current word starts with -, complete flags
     if [[ "$cur" == -* ]]; then

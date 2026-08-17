@@ -219,6 +219,22 @@ const filesystem::path& WebDashCore::GetWebDashRootDirectory() const {
 }
 
 
+std::optional<filesystem::path> WebDashCore::ResolveProjectConfigPath(const filesystem::path& directory) {
+    filesystem::path jsonc_path = directory / WebDashConst::Public::kProjectConfigFilename;
+    if (filesystem::exists(jsonc_path)) {
+        return jsonc_path;
+    }
+
+    filesystem::path json_path = jsonc_path;
+    json_path.replace_extension(".json");
+    if (filesystem::exists(json_path)) {
+        return json_path;
+    }
+
+    return nullopt;
+}
+
+
 std::filesystem::path WebDashCore::GetPersistenteAppStoragePath() const {
     filesystem::path app_storage_path = GetWebDashRootDirectory();
     app_storage_path += string("/app-persistent/data/") + _WEBDASH_PROJECT_NAME_;

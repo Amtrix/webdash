@@ -1,0 +1,120 @@
+{
+    "commands": [
+        {
+            "name": "all",
+            "silent": true,
+            "actions": [
+                ":test-profile-modules-add",
+                ":test-profile-modules-add-missing-location",
+                ":test-profile-modules-add-invalid-path"
+            ]
+        },
+        {
+            ".comment": "Regression coverage for --profile.modules.add: clones a throwaway local git repo (fixture: ./module-add-fixture), reads its project-location, moves it under app-temporary, and records {path, git} in the live webdash.profile.jsonc. exit-actions unconditionally restore the real profile from a backup and remove all temp dirs, whether the test passes or fails.",
+            "name": "test-profile-modules-add",
+            "silent": true,
+            "test-case": "webdash --profile.modules.add clones, installs, and records a module in webdash.profile.jsonc.",
+            "actions": [
+                "mkdir -p $.webdash.temporary()",
+                "cp $.rootDir()/webdash.profile.jsonc $.webdash.temporary()/profile-backup-for-module-add-test.jsonc",
+                "rm -rf $.rootDir()/app-temporary/test-module-add-src $.rootDir()/app-temporary/test-module-add-dest",
+                "mkdir -p $.rootDir()/app-temporary/test-module-add-src",
+                "cp $.thisDir()/module-add-fixture/webdash.config.jsonc $.rootDir()/app-temporary/test-module-add-src/webdash.config.jsonc",
+                "git -C $.rootDir()/app-temporary/test-module-add-src init -q",
+                "git -C $.rootDir()/app-temporary/test-module-add-src add -A",
+                "git -c user.email=test@test.com -c user.name=test -C $.rootDir()/app-temporary/test-module-add-src commit -q -m init",
+                "webdash --profile.modules.add $.rootDir()/app-temporary/test-module-add-src",
+                "test -d $.rootDir()/app-temporary/test-module-add-dest",
+                "test -f $.rootDir()/app-temporary/test-module-add-dest/webdash.config.jsonc",
+                "grep -qF test-module-add-dest $.rootDir()/webdash.profile.jsonc",
+                "grep -qF test-module-add-src $.rootDir()/webdash.profile.jsonc",
+                "webdash $.rootDir()/app-temporary/test-module-add-dest:noop"
+            ],
+            "exit-actions": [
+                {
+                    "0": [
+                        "cp $.webdash.temporary()/profile-backup-for-module-add-test.jsonc $.rootDir()/webdash.profile.jsonc",
+                        "rm -f $.webdash.temporary()/profile-backup-for-module-add-test.jsonc",
+                        "rm -rf $.rootDir()/app-temporary/test-module-add-src $.rootDir()/app-temporary/test-module-add-dest"
+                    ],
+                    "return": 0
+                },
+                {
+                    "*": [
+                        "cp $.webdash.temporary()/profile-backup-for-module-add-test.jsonc $.rootDir()/webdash.profile.jsonc",
+                        "rm -f $.webdash.temporary()/profile-backup-for-module-add-test.jsonc",
+                        "rm -rf $.rootDir()/app-temporary/test-module-add-src $.rootDir()/app-temporary/test-module-add-dest"
+                    ],
+                    "return": 1
+                }
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            ".comment": "Regression coverage: a repo whose config has no 'project-location' field must be rejected cleanly - no crash, no profile mutation. Fixture: ./module-add-fixture-no-location.",
+            "name": "test-profile-modules-add-missing-location",
+            "silent": true,
+            "test-case": "webdash --profile.modules.add rejects a repo with no 'project-location' field.",
+            "actions": [
+                "mkdir -p $.webdash.temporary()",
+                "cp $.rootDir()/webdash.profile.jsonc $.webdash.temporary()/profile-backup-for-module-add-missing-location-test.jsonc",
+                "rm -rf $.rootDir()/app-temporary/test-module-add-missing-location-src",
+                "mkdir -p $.rootDir()/app-temporary/test-module-add-missing-location-src",
+                "cp $.thisDir()/module-add-fixture-no-location/webdash.config.jsonc $.rootDir()/app-temporary/test-module-add-missing-location-src/webdash.config.jsonc",
+                "git -C $.rootDir()/app-temporary/test-module-add-missing-location-src init -q",
+                "git -C $.rootDir()/app-temporary/test-module-add-missing-location-src add -A",
+                "git -c user.email=test@test.com -c user.name=test -C $.rootDir()/app-temporary/test-module-add-missing-location-src commit -q -m init",
+                "webdash --profile.modules.add $.rootDir()/app-temporary/test-module-add-missing-location-src 2>&1 | grep -qF \"No 'project-location' field found\"",
+                "diff -q $.rootDir()/webdash.profile.jsonc $.webdash.temporary()/profile-backup-for-module-add-missing-location-test.jsonc"
+            ],
+            "exit-actions": [
+                {
+                    "0": [
+                        "cp $.webdash.temporary()/profile-backup-for-module-add-missing-location-test.jsonc $.rootDir()/webdash.profile.jsonc",
+                        "rm -f $.webdash.temporary()/profile-backup-for-module-add-missing-location-test.jsonc",
+                        "rm -rf $.rootDir()/app-temporary/test-module-add-missing-location-src"
+                    ],
+                    "return": 0
+                },
+                {
+                    "*": [
+                        "cp $.webdash.temporary()/profile-backup-for-module-add-missing-location-test.jsonc $.rootDir()/webdash.profile.jsonc",
+                        "rm -f $.webdash.temporary()/profile-backup-for-module-add-missing-location-test.jsonc",
+                        "rm -rf $.rootDir()/app-temporary/test-module-add-missing-location-src"
+                    ],
+                    "return": 1
+                }
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            ".comment": "Regression coverage: an invalid/nonexistent source path must be rejected cleanly - no crash, no profile mutation.",
+            "name": "test-profile-modules-add-invalid-path",
+            "silent": true,
+            "test-case": "webdash --profile.modules.add rejects a nonexistent source path.",
+            "actions": [
+                "mkdir -p $.webdash.temporary()",
+                "cp $.rootDir()/webdash.profile.jsonc $.webdash.temporary()/profile-backup-for-module-add-invalid-path-test.jsonc",
+                "webdash --profile.modules.add $.rootDir()/app-temporary/this-path-does-not-exist-at-all-xyz123 2>&1 | grep -qF 'Failed to clone repository'",
+                "diff -q $.rootDir()/webdash.profile.jsonc $.webdash.temporary()/profile-backup-for-module-add-invalid-path-test.jsonc"
+            ],
+            "exit-actions": [
+                {
+                    "0": [
+                        "cp $.webdash.temporary()/profile-backup-for-module-add-invalid-path-test.jsonc $.rootDir()/webdash.profile.jsonc",
+                        "rm -f $.webdash.temporary()/profile-backup-for-module-add-invalid-path-test.jsonc"
+                    ],
+                    "return": 0
+                },
+                {
+                    "*": [
+                        "cp $.webdash.temporary()/profile-backup-for-module-add-invalid-path-test.jsonc $.rootDir()/webdash.profile.jsonc",
+                        "rm -f $.webdash.temporary()/profile-backup-for-module-add-invalid-path-test.jsonc"
+                    ],
+                    "return": 1
+                }
+            ],
+            "wdir": "$.thisDir()"
+        }
+    ]
+}

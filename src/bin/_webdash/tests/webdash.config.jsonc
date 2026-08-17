@@ -53,6 +53,8 @@
                 ":test-env-and-var-substitutions",
                 ":test-config-env",
                 ":test-jsonc-support",
+                ":test-json-fallback-support",
+                "./module-add-tests:all",
                 ":test-empty-actions-array-is-valid",
                 ":test-missing-actions-is-invalid",
                 "./clonedby-profile-dep:all",
@@ -254,6 +256,16 @@
             "test-case": "A config using \"//\"/\"/* */\" comments and trailing commas parses and runs correctly.",
             "actions": [
                 "./jsonc-fixture:test-jsonc-parses-and-runs"
+            ],
+            "wdir": "$.thisDir()"
+        },
+        {
+            ".comment": "Regression coverage for the .json fallback: a project whose only config is webdash.config.json (no .jsonc) must still resolve and run. Fixture lives in ./json-fallback-fixture.",
+            "name": "test-json-fallback-support",
+            "silent": true,
+            "test-case": "A project with only webdash.config.json (no .jsonc) still resolves and runs.",
+            "actions": [
+                "./json-fallback-fixture:test-json-fallback-runs"
             ],
             "wdir": "$.thisDir()"
         },

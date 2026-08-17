@@ -60,16 +60,16 @@ fi
  */
 namespace NATIVE_COMMANDS
 {
-    string CONFIG_REGISTER = "--config.register";
-    string CONFIG_UNREGISTER = "--config.unregister";
-    string CONFIG_RELOAD_REGISTERED = "--config.reload-registered";
+    string CONFIG_REGISTER_ADD = "--config.register.add";
+    string CONFIG_REGISTER_REMOVE = "--config.register.remove";
+    string CONFIG_REGISTER_RELOAD = "--config.register.reload";
     string HELP = "--help";
-    string LIST_CONFIG = "--list-registered-configs";
+    string CONFIG_REGISTER_LIST = "--config.register.list";
     string LIST_DEFINITIONS = "--list-definitions";
     string _INT_CREATE_BUILD_INIT = _WEBDASH_INTERNAL_CMD_PREFIX + "create-build-init";
     string _INT_CREATE_PROJECT_CLONER = _WEBDASH_INTERNAL_CMD_PREFIX + "create-project-cloner";
     string PING_SERVER = "--ping-server";
-    string INSTALL_MODULE = "--install-module";
+    string PROFILE_MODULES_ADD = "--profile.modules.add";
     string TOOLS_PORTS_STATUS = "--tools.ports.status";
     string SERVER_PROCESS_ONCE = "--server-process-once";
     string TOOLS_PORTS_FORWARDED_LIST = "--tools.ports.forwarded.list";
@@ -87,16 +87,16 @@ namespace NATIVE_COMMANDS
  */
 vector<string> WebDashNativeCommands()
 {
-    vector<string> commands = { NATIVE_COMMANDS::CONFIG_REGISTER,
-             NATIVE_COMMANDS::CONFIG_UNREGISTER,
-             NATIVE_COMMANDS::CONFIG_RELOAD_REGISTERED,
+    vector<string> commands = { NATIVE_COMMANDS::CONFIG_REGISTER_ADD,
+             NATIVE_COMMANDS::CONFIG_REGISTER_REMOVE,
+             NATIVE_COMMANDS::CONFIG_REGISTER_RELOAD,
              NATIVE_COMMANDS::HELP,
-             NATIVE_COMMANDS::LIST_CONFIG,
+             NATIVE_COMMANDS::CONFIG_REGISTER_LIST,
              NATIVE_COMMANDS::LIST_DEFINITIONS,
              NATIVE_COMMANDS::_INT_CREATE_BUILD_INIT,
              NATIVE_COMMANDS::_INT_CREATE_PROJECT_CLONER,
              NATIVE_COMMANDS::PING_SERVER,
-             NATIVE_COMMANDS::INSTALL_MODULE,
+             NATIVE_COMMANDS::PROFILE_MODULES_ADD,
              NATIVE_COMMANDS::TOOLS_PORTS_STATUS,
              NATIVE_COMMANDS::SERVER_PROCESS_ONCE,
              NATIVE_COMMANDS::TOOLS_PORTS_FORWARDED_LIST,
@@ -137,15 +137,15 @@ bool IsInternalCommand(const string command) {
 
 
 /**
- * @brief Command: `webdash list-registered-configs`.
+ * @brief Command: `webdash --config.register.list`.
  * @param arguments The (command line) arguments.
  * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
  */
-bool ListRegistered_Command(const vector<string>& arguments) {
+bool ConfigRegisterList_Command(const vector<string>& arguments) {
     if (arguments.size() != 1)
         return false;
 
-    if (arguments[0] != NATIVE_COMMANDS::LIST_CONFIG)
+    if (arguments[0] != NATIVE_COMMANDS::CONFIG_REGISTER_LIST)
         return false;
 
     WebDashConfigList();
@@ -261,21 +261,21 @@ bool CreateProjectCloner_InternalCommand(const vector<string>& arguments) {
                 continue;
             }
 
-            // Check if module has no destination path - use --install-module to read project-location
+            // Check if module has no destination path - use --profile.modules.add to read project-location
             if (entry.destination.empty() && !entry.source.empty()) {
                 writer(WebDashType::StorageWriteType::Append,
                     "# Module with project-location: " + entry.source + "\n");
-                string install_cmd = "webdash --install-module " + entry.source;
-                if (entry.do_register) {
-                    install_cmd += " --config.register";
-                }
-                install_cmd += "\n";
-                writer(WebDashType::StorageWriteType::Append, install_cmd);
+                writer(WebDashType::StorageWriteType::Append,
+                    "webdash --profile.modules.add " + entry.source + "\n");
 
                 // Run post-install task if specified (need to use internal command to discover location)
                 if (!entry.webdash_task.empty()) {
                     writer(WebDashType::StorageWriteType::Append,
                         "# Note: post-install task '" + entry.webdash_task + "' requires manual execution after install\n");
+                }
+                if (entry.do_register) {
+                    writer(WebDashType::StorageWriteType::Append,
+                        "# Note: 'register' requires manual `webdash --config.register.add <path>` after install (destination is only known once installed)\n");
                 }
                 writer(WebDashType::StorageWriteType::Append, "\n");
                 continue;
@@ -295,7 +295,7 @@ bool CreateProjectCloner_InternalCommand(const vector<string>& arguments) {
             }
 
             if (entry.do_register) {
-                writer(WebDashType::StorageWriteType::Append, "webdash --config.register " + entry.destination + "/" + WebDashCore::GetProjectConfigFilename() + "\n");
+                writer(WebDashType::StorageWriteType::Append, "webdash --config.register.add " + entry.destination + "/" + WebDashCore::GetProjectConfigFilename() + "\n");
             }
         }
 
@@ -462,9 +462,19 @@ int ConfigValidate_Command(const vector<string>& arguments) {
         return 1;
     }
 
-    string config_path = (arguments.size() == 2)
-        ? arguments[1]
-        : (string("./") + WebDashCore::GetProjectConfigFilename());
+    string config_path;
+    if (arguments.size() == 2) {
+        config_path = arguments[1];
+        // Backward-compat: a .jsonc path that doesn't exist may have a legacy .json sibling.
+        if (!fs::exists(config_path) && fs::path(config_path).extension() == ".jsonc") {
+            fs::path fallback = config_path;
+            fallback.replace_extension(".json");
+            if (fs::exists(fallback)) config_path = fallback.string();
+        }
+    } else {
+        auto resolved = WebDashCore::ResolveProjectConfigPath(fs::current_path());
+        config_path = resolved ? resolved->string() : (string("./") + WebDashCore::GetProjectConfigFilename());
+    }
 
     if (!fs::exists(config_path)) {
         cerr << "ERROR: Config file not found: " << config_path << endl;
@@ -577,24 +587,24 @@ int ConfigValidate_Command(const vector<string>& arguments) {
 /**
  * @brief Registers the config from tracking by server. Supported command types:
  *
- *           `webdash --config.register`
+ *           `webdash --config.register.add`
  *                Attempts to register the file ./webdash.config.jsonc
  *
  *
- *           `webdash --config.register <path-to-config>`
+ *           `webdash --config.register.add <path-to-config>`
  *                Attempts to register the file <path-to-config>
  *
- *           `webdash --config.register <path-to-config> --user <username>`
+ *           `webdash --config.register.add <path-to-config> --user <username>`
  *                Registers the config and runs tasks as the specified user
  *
  * @param arguments The (command line) arguments.
  * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
  */
-bool ConfigRegister_Command(const vector<string>& arguments) {
+bool ConfigRegisterAdd_Command(const vector<string>& arguments) {
     if (arguments.size() < 1 || arguments.size() > 4)
         return false;
 
-    if (arguments[0] != NATIVE_COMMANDS::CONFIG_REGISTER)
+    if (arguments[0] != NATIVE_COMMANDS::CONFIG_REGISTER_ADD)
         return false;
 
 
@@ -628,21 +638,21 @@ bool ConfigRegister_Command(const vector<string>& arguments) {
 /**
  * @brief Unregisters the config from tracking by server. Supported command types:
  *
- *          `webdash --config.unregister`
+ *          `webdash --config.register.remove`
  *                Attempts to unregister the file ./webdash.config.jsonc
  *
  *
- *          `webdash --config.unregister <path-to-config>`
+ *          `webdash --config.register.remove <path-to-config>`
  *                Attempts to unregister the file <path-to-config>
  *
  * @param arguments The (command line) arguments.
  * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
  */
-bool ConfigUnregister_Command(const vector<string>& arguments) {
+bool ConfigRegisterRemove_Command(const vector<string>& arguments) {
     if (arguments.size() != 1 && arguments.size() != 2)
         return false;
 
-    if  (arguments[0] != NATIVE_COMMANDS::CONFIG_UNREGISTER)
+    if  (arguments[0] != NATIVE_COMMANDS::CONFIG_REGISTER_REMOVE)
         return false;
 
     string path = string("./") + WebDashCore::GetProjectConfigFilename();
@@ -666,15 +676,15 @@ bool ConfigUnregister_Command(const vector<string>& arguments) {
 
 
 /**
- * @brief Command: `webdash --config.reload-registered`.
+ * @brief Command: `webdash --config.register.reload`.
  * @param arguments The (command line) arguments.
  * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
  */
-bool ConfigReloadRegistered_Command(const vector<string>& arguments) {
+bool ConfigRegisterReload_Command(const vector<string>& arguments) {
     if (arguments.size() != 1)
         return false;
 
-    if  (arguments[0] != NATIVE_COMMANDS::CONFIG_RELOAD_REGISTERED)
+    if  (arguments[0] != NATIVE_COMMANDS::CONFIG_REGISTER_RELOAD)
         return false;
 
     WebDashReloadAll();
@@ -800,16 +810,17 @@ bool ToolsPortsStatus_Command(const vector<string>& arguments) {
 
 
 /**
- * @brief Helper function to read project-location from a cloned repo's webdash.config.jsonc.
+ * @brief Helper function to read project-location from a cloned repo's project config
+ *        (webdash.config.jsonc, or a legacy webdash.config.json sibling).
  * @param repo_path Path to the cloned repository.
  * @returns The project-location value if found, empty string otherwise.
  */
 string ReadProjectLocation(const string& repo_path) {
-    string config_path = repo_path + "/" + WebDashCore::GetProjectConfigFilename();
-
-    if (!fs::exists(config_path)) {
+    auto resolved = WebDashCore::ResolveProjectConfigPath(repo_path);
+    if (!resolved) {
         return "";
     }
+    string config_path = resolved->string();
 
     try {
         ifstream config_file(config_path);
@@ -833,26 +844,138 @@ string ReadProjectLocation(const string& repo_path) {
 
 
 /**
- * @brief Command: `webdash --install-module <git-url>`.
+ * @brief Finds the byte range of a top-level JSONC array's brackets (e.g. `"modules": [ ... ]`).
+ *        Tracks string literals and line/block comments so brackets inside them are ignored.
+ * @param text The full JSONC file content.
+ * @param key The key whose array value to locate (first occurrence).
+ * @returns {index of '[', index of matching ']'}, or {npos, npos} if not found.
+ */
+std::pair<size_t, size_t> FindJsoncArrayRange(const string& text, const string& key) {
+    string needle = "\"" + key + "\"";
+    size_t key_pos = text.find(needle);
+    if (key_pos == string::npos)
+        return { string::npos, string::npos };
+
+    size_t bracket_start = text.find('[', key_pos + needle.size());
+    if (bracket_start == string::npos)
+        return { string::npos, string::npos };
+
+    int depth = 0;
+    bool in_string = false;
+    bool escape = false;
+
+    for (size_t i = bracket_start; i < text.size(); i++) {
+        char c = text[i];
+
+        if (in_string) {
+            if (escape) escape = false;
+            else if (c == '\\') escape = true;
+            else if (c == '"') in_string = false;
+            continue;
+        }
+
+        if (c == '"') { in_string = true; continue; }
+
+        if (c == '/' && i + 1 < text.size() && text[i + 1] == '/') {
+            size_t nl = text.find('\n', i);
+            i = (nl == string::npos) ? text.size() - 1 : nl;
+            continue;
+        }
+        if (c == '/' && i + 1 < text.size() && text[i + 1] == '*') {
+            size_t end = text.find("*/", i + 2);
+            i = (end == string::npos) ? text.size() - 1 : end + 1;
+            continue;
+        }
+
+        if (c == '[') depth++;
+        else if (c == ']') {
+            depth--;
+            if (depth == 0) return { bracket_start, i };
+        }
+    }
+
+    return { string::npos, string::npos };
+}
+
+
+/**
+ * @brief Appends a `{ "path", "git" }` entry to webdash.profile.jsonc's "modules" array,
+ *        preserving the rest of the file (comments included) via a surgical text insert
+ *        rather than a full JSON reserialize.
+ * @param git_url The module's git URL.
+ * @param destination_abs_path The absolute path the module was installed to.
+ * @returns True on success; false if the profile or its "modules" array couldn't be found/written.
+ */
+bool AppendModuleToProfile(const string& git_url, const string& destination_abs_path) {
+    fs::path profile_path = fs::path(WebDashCore::Get().GetWebDashRootDirectory()) / WebDashCore::GetRootProfileFilename();
+
+    std::ifstream in(profile_path);
+    if (!in.is_open())
+        return false;
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    string content = buf.str();
+    in.close();
+
+    auto [arr_start, arr_end] = FindJsoncArrayRange(content, WebDashConst::Public::kProfileKeyModules);
+    if (arr_start == string::npos)
+        return false;
+
+    // Prefer a $.rootDir()-relative path for readability, matching existing entries.
+    string root_dir = WebDashCore::Get().GetWebDashRootDirectory();
+    string display_path = destination_abs_path;
+    if (display_path.rfind(root_dir, 0) == 0) {
+        display_path = "$.rootDir()" + display_path.substr(root_dir.size());
+    }
+
+    string new_entry =
+        "{\n            \"path\": \"" + display_path + "\",\n            \"git\": \"" + git_url + "\"\n        }";
+
+    // Insert right after the last non-whitespace char (the previous entry's closing
+    // brace, if any) rather than right before ']', so the comma doesn't dangle on its
+    // own line. The array's existing closing whitespace (before ']') is left as-is,
+    // so the insertion itself doesn't add a trailing newline/indent.
+    size_t insert_pos = arr_end;
+    while (insert_pos > arr_start + 1 && isspace(static_cast<unsigned char>(content[insert_pos - 1])))
+        insert_pos--;
+    bool is_empty = (insert_pos == arr_start + 1);
+
+    string insertion = is_empty
+        ? ("\n        " + new_entry)
+        : (",\n        " + new_entry);
+
+    content.insert(insert_pos, insertion);
+
+    std::ofstream out(profile_path, std::ios::trunc);
+    if (!out.is_open())
+        return false;
+    out << content;
+    return true;
+}
+
+
+/**
+ * @brief Command: `webdash --profile.modules.add <git-url>`.
  *
  * Installs a module by:
  * 1. Cloning the repository to a temporary location
- * 2. Reading the project-location from webdash.config.jsonc
- * 3. Moving the repo to the specified destination
- * 4. Optionally registering with WebDash server
+ * 2. Reading the project-location from its webdash.config.jsonc
+ * 3. Confirming the destination doesn't already exist
+ * 4. Moving the repo to that destination
+ * 5. Recording it in webdash.profile.jsonc's "modules" array, unless this git URL
+ *    is already tracked there (e.g. inside a "bundle" entry)
  *
  * @param arguments The (command line) arguments.
  * @returns True if, based on the taken action, further execution should be terminated; false otherwise.
  */
-bool InstallModule_Command(const vector<string>& arguments) {
-    if (arguments.size() < 2 || arguments.size() > 3)
+bool ProfileModulesAdd_Command(const vector<string>& arguments) {
+    if (arguments.size() != 2)
         return false;
 
-    if (arguments[0] != NATIVE_COMMANDS::INSTALL_MODULE)
+    if (arguments[0] != NATIVE_COMMANDS::PROFILE_MODULES_ADD)
         return false;
 
     string git_url = arguments[1];
-    bool do_register = (arguments.size() == 3 && arguments[2] == "--config.register");
 
     cout << endl;
     cout << "Installing module from: " << git_url << endl;
@@ -935,13 +1058,23 @@ bool InstallModule_Command(const vector<string>& arguments) {
 
     cout << "Module installed successfully!" << endl;
 
-    // Register with WebDash server if requested
-    if (do_register) {
-        fs::path config_path = fs::path(project_location) / WebDashCore::GetProjectConfigFilename();
-        if (fs::exists(config_path)) {
-            cout << "Registering with WebDash server..." << endl;
-            WebDashRegister(config_path.string());
+    // Record in the profile's "modules" array, unless already tracked there
+    // (e.g. this install was itself expanding a "bundle" entry during setup).
+    bool already_tracked = false;
+    for (const auto& existing : WebDashCore::Get().GetExternalGitProjects()) {
+        if (existing.source == git_url) {
+            already_tracked = true;
+            break;
         }
+    }
+
+    if (already_tracked) {
+        cout << "Already tracked in " << WebDashCore::GetRootProfileFilename() << " - not adding a duplicate entry." << endl;
+    } else if (AppendModuleToProfile(git_url, project_location)) {
+        cout << "Recorded module in " << WebDashCore::GetRootProfileFilename() << "." << endl;
+    } else {
+        cerr << "WARNING: Module installed, but failed to record it in " << WebDashCore::GetRootProfileFilename() << "." << endl;
+        cerr << "Add it manually under \"modules\": [ { \"path\": \"" << project_location << "\", \"git\": \"" << git_url << "\" } ]" << endl;
     }
 
     cout << endl;
@@ -1093,29 +1226,28 @@ bool ServerProcessOnce_Command(const vector<string>& arguments) {
  */
 vector<string> NativeCommandDescription(const string& cmd) {
     static const std::map<string, vector<string>> descriptions = {
-        { NATIVE_COMMANDS::CONFIG_REGISTER, {
+        { NATIVE_COMMANDS::CONFIG_REGISTER_ADD, {
             "Register a config for periodic execution by the server.",
             "path: defaults to ./webdash.config.jsonc if omitted.",
             "--user <name>: run the config's tasks as this Unix user instead of the server's own." } },
-        { NATIVE_COMMANDS::CONFIG_UNREGISTER, {
+        { NATIVE_COMMANDS::CONFIG_REGISTER_REMOVE, {
             "Remove a config from the registry.",
             "path: defaults to ./webdash.config.jsonc if omitted." } },
-        { NATIVE_COMMANDS::CONFIG_RELOAD_REGISTERED, {
+        { NATIVE_COMMANDS::CONFIG_REGISTER_RELOAD, {
             "Tell the server to reload every registered config." } },
         { NATIVE_COMMANDS::HELP, {
             "Show this help text.",
             "--verbose: also print these descriptions." } },
-        { NATIVE_COMMANDS::LIST_CONFIG, {
+        { NATIVE_COMMANDS::CONFIG_REGISTER_LIST, {
             "Print all registered config paths." } },
         { NATIVE_COMMANDS::LIST_DEFINITIONS, {
             "Show $.var()/profile substitutions available to a config.",
             "path-to-config: defaults to the current directory's config." } },
         { NATIVE_COMMANDS::PING_SERVER, {
             "Check whether the server is running and responsive." } },
-        { NATIVE_COMMANDS::INSTALL_MODULE, {
-            "Clone a repo, read its project-location, and move it there.",
-            "git-url: the repository to clone.",
-            "--config.register: also register the config after installing." } },
+        { NATIVE_COMMANDS::PROFILE_MODULES_ADD, {
+            "Clone a repo, read its project-location, move it there, and record it in the profile.",
+            "git-url: the repository to clone." } },
         { NATIVE_COMMANDS::TOOLS_PORTS_STATUS, {
             "Show whether a port is in use, and by which process.",
             "port: the port number to check." } },
@@ -1184,14 +1316,14 @@ bool Help_Command(const vector<string>& arguments) {
         if (IsInternalCommand(cmd) == false) {
             if (cmd == NATIVE_COMMANDS::HELP) {
                 cout << string(kSpaceOutCommands, ' ') << cmd << ", -h [--verbose]" << endl;
-            } else if (cmd == NATIVE_COMMANDS::CONFIG_REGISTER) {
+            } else if (cmd == NATIVE_COMMANDS::CONFIG_REGISTER_ADD) {
                 cout << string(kSpaceOutCommands, ' ') << cmd << " [path] [--user <name>]" << endl;
-            } else if (cmd == NATIVE_COMMANDS::CONFIG_UNREGISTER) {
+            } else if (cmd == NATIVE_COMMANDS::CONFIG_REGISTER_REMOVE) {
                 cout << string(kSpaceOutCommands, ' ') << cmd << " [path]" << endl;
             } else if (cmd == NATIVE_COMMANDS::LIST_DEFINITIONS) {
                 cout << string(kSpaceOutCommands, ' ') << cmd << " [path-to-config]" << endl;
-            } else if (cmd == NATIVE_COMMANDS::INSTALL_MODULE) {
-                cout << string(kSpaceOutCommands, ' ') << cmd << " <git-url> [--config.register]" << endl;
+            } else if (cmd == NATIVE_COMMANDS::PROFILE_MODULES_ADD) {
+                cout << string(kSpaceOutCommands, ' ') << cmd << " <git-url>" << endl;
             } else if (cmd == NATIVE_COMMANDS::SERVER_PROCESS_ONCE) {
                 cout << string(kSpaceOutCommands, ' ') << cmd << " <config-path>" << endl;
             } else if (cmd == NATIVE_COMMANDS::CONFIG_VALIDATE) {
@@ -1222,8 +1354,8 @@ bool Help_Command(const vector<string>& arguments) {
 
     cout << endl;
     cout << "EXAMPLES:" << endl;
-    cout << "    webdash --install-module git@github.com:user/repo.git" << endl;
-    cout << "        Install a module by reading its project-location from webdash.config.jsonc" << endl;
+    cout << "    webdash --profile.modules.add git@github.com:user/repo.git" << endl;
+    cout << "        Clone, install, and record a module in webdash.profile.jsonc" << endl;
     cout << endl;
     cout << "    webdash --profile.reapply" << endl;
     cout << "        Re-apply modules/dependencies from webdash.profile.jsonc" << endl;
@@ -1249,7 +1381,7 @@ bool Help_Command(const vector<string>& arguments) {
     cout << "    webdash --tools.ports.forwarded.add 8080" << endl;
     cout << "        Configure Windows/WSL port forwarding so 8080 is reachable from your LAN" << endl;
     cout << endl;
-    cout << "Run 'webdash --list-registered-configs' to see all registered project configs." << endl;
+    cout << "Run 'webdash --config.register.list' to see all registered project configs." << endl;
 
     return true;
 }
@@ -1404,7 +1536,7 @@ int ExecuteUserInput(int argc, char **argv) {
      * Non-config commands.
      */
 
-    if (ListRegistered_Command(arguments)) return 0;
+    if (ConfigRegisterList_Command(arguments)) return 0;
     if (CreateBuildInitializer_InternalCommand(arguments)) return 0;
     if (CreateProjectCloner_InternalCommand(arguments)) return 0;
 
@@ -1413,12 +1545,12 @@ int ExecuteUserInput(int argc, char **argv) {
         if (validate_result >= 0) return validate_result;
     }
 
-    if (ConfigRegister_Command(arguments)) return 0;
-    if (ConfigUnregister_Command(arguments)) return 0;
-    if (ConfigReloadRegistered_Command(arguments)) return 0;
+    if (ConfigRegisterAdd_Command(arguments)) return 0;
+    if (ConfigRegisterRemove_Command(arguments)) return 0;
+    if (ConfigRegisterReload_Command(arguments)) return 0;
     if (PingServer_Command(arguments)) return 0;
     if (ToolsPortsStatus_Command(arguments)) return 0;
-    if (InstallModule_Command(arguments)) return 0;
+    if (ProfileModulesAdd_Command(arguments)) return 0;
     if (ServerProcessOnce_Command(arguments)) return 0;
     if (ToolsPortsForwarded_Command(arguments)) return 0;
     if (ProfileReapply_Command(arguments)) return 0;
@@ -1452,13 +1584,13 @@ int ExecuteUserInput(int argc, char **argv) {
         }
     } else {
         // Check if config file exists but failed to parse
-        auto config_path = std::filesystem::current_path() / WebDashCore::GetProjectConfigFilename();
-        if (std::filesystem::exists(config_path)) {
+        auto resolved_config_path = WebDashCore::ResolveProjectConfigPath(std::filesystem::current_path());
+        if (resolved_config_path.has_value()) {
             // Config exists but parsing must have failed - error was already printed
-            cerr << endl << string(kSpaceOutGroup, ' ') << "Fix the JSON syntax error in '" << WebDashCore::GetProjectConfigFilename() << "' and try again." << endl;
+            cerr << endl << string(kSpaceOutGroup, ' ') << "Fix the JSON syntax error in '" << resolved_config_path->string() << "' and try again." << endl;
         } else {
             cerr << endl << string(kSpaceOutGroup, ' ') << "No '" << WebDashCore::GetProjectConfigFilename() << "' found in current directory." << endl;
-            cerr << string(kSpaceOutGroup, ' ') << "Run 'webdash --list-registered-configs' to see registered projects." << endl;
+            cerr << string(kSpaceOutGroup, ' ') << "Run 'webdash --config.register.list' to see registered projects." << endl;
         }
     }
 
@@ -1511,7 +1643,7 @@ int main(int argc, char **argv) {
         cerr << "HINTS:" << endl;
         cerr << "  1. Create a '" << WebDashCore::GetProjectConfigFilename() << "' in the current directory" << endl;
         cerr << "  2. Or specify the full path: webdash /path/to/project:" << endl;
-        cerr << "  3. Run 'webdash --list-registered-configs' to see all registered configs" << endl;
+        cerr << "  3. Run 'webdash --config.register.list' to see all registered configs" << endl;
         cerr << "\n";
         return 1;
     } catch (WebDashException::General& e) {

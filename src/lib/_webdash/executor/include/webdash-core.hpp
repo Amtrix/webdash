@@ -98,6 +98,17 @@ class WebDashCore {
 
 
         /**
+         *  @brief Finds a project's config file in a directory, preferring the
+         *         canonical `.jsonc` name but falling back to a legacy `.json`
+         *         sibling (same stem) if that's the only one present - so older/
+         *         external projects not yet renamed still work.
+         *  @param directory The directory to look in.
+         *  @returns The resolved config path, or nullopt if neither exists.
+         */
+        static std::optional<filesystem::path> ResolveProjectConfigPath(const filesystem::path& directory);
+
+
+        /**
          *  @brief For the project that includes this library, it will return the project-specific directory for
          *         PERSISTENT file storage.
          *  @returnsProject's persistent file storage.

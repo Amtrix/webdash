@@ -13,7 +13,7 @@ Verifies that the WebDash server's scheduling system works correctly by logging 
 webdash all
 
 # Register with WebDash server for scheduled execution
-webdash --config.register
+webdash --config.register.add
 ```
 
 ## Verification

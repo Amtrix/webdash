@@ -1,0 +1,9 @@
+{
+    "commands": [
+        {
+            "name": "test-json-fallback-runs",
+            "silent": true,
+            "action": "echo json-fallback-ok"
+        }
+    ]
+}

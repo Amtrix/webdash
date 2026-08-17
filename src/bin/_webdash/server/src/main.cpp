@@ -1919,11 +1919,11 @@ int execute_main()
     // Register IPC command handlers, then start the WebSocket server.
     //
 
-    // ── CONFIG_REGISTER ────────────────────────────────────────────────────────
+    // ── CONFIG_REGISTER_ADD ────────────────────────────────────────────────────────
     // Adds config to the list of periodically executed files.
     // Payload can be a plain path or JSON: {"path": "...", "user": "username"}
     // Fire-and-forget (no response sent).
-    websocket::dispatcher.On(IpcCommand::CONFIG_REGISTER,
+    websocket::dispatcher.On(IpcCommand::CONFIG_REGISTER_ADD,
         [&suite](const IpcMsgParser::Parsed& msg, IpcDispatcher::IpcResponder /*reply*/) {
             WebDashCore::Get().Log(WebDashType::LogType::INFO, "`register` request received.");
 
@@ -1970,8 +1970,8 @@ int execute_main()
             }
         });
 
-    // ── CONFIG_UNREGISTER ──────────────────────────────────────────────────────
-    websocket::dispatcher.On(IpcCommand::CONFIG_UNREGISTER,
+    // ── CONFIG_REGISTER_REMOVE ──────────────────────────────────────────────────────
+    websocket::dispatcher.On(IpcCommand::CONFIG_REGISTER_REMOVE,
         [](const IpcMsgParser::Parsed& /*msg*/, IpcDispatcher::IpcResponder reply) {
             reply("success");
         });

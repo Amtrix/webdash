@@ -99,9 +99,8 @@ namespace {
         // - If it's a directory, it must contain webdash.config.jsonc
         if (std::filesystem::exists(path)) {
             if (std::filesystem::is_directory(path)) {
-                // Directory exists - check if it has webdash.config.jsonc
-                auto config_path = path / WebDashConst::Public::kProjectConfigFilename;
-                if (std::filesystem::exists(config_path)) {
+                // Directory exists - check if it has a project config (.jsonc or legacy .json)
+                if (WebDashCore::ResolveProjectConfigPath(path).has_value()) {
                     return true;  // Already cloned and has config
                 }
                 // Directory exists but is empty/incomplete - continue to try cloning
@@ -121,11 +120,10 @@ namespace {
             }
 
             if (PathMatchesModule(module.destination, path_str)) {
-                // Check if the module destination already has a valid webdash.config.jsonc
-                // If so, don't try to clone - the module is already set up, we just need
-                // to access a subdirectory that may not exist yet
-                std::filesystem::path dest_config = std::filesystem::path(module.destination) / WebDashConst::Public::kProjectConfigFilename;
-                if (std::filesystem::exists(dest_config)) {
+                // Check if the module destination already has a valid project config
+                // (.jsonc or legacy .json). If so, don't try to clone - the module is
+                // already set up, we just need to access a subdirectory that may not exist yet
+                if (WebDashCore::ResolveProjectConfigPath(module.destination).has_value()) {
                     WebDash().Log(WebDashType::LogType::DEBUG,
                         "Module already has valid config, skipping clone: " + module.destination);
                     return true;  // Module exists, subdirectory access is up to caller
@@ -230,14 +228,27 @@ namespace {
 
 
 WebDashConfig::WebDashConfig(const std::filesystem::path config_filepath) {
+    std::filesystem::path resolved_filepath = config_filepath;
+
+    // Backward-compat: if the requested .jsonc doesn't exist, fall back to a
+    // legacy .json sibling (same stem) - e.g. external/older projects not yet
+    // renamed still work.
+    if (!std::filesystem::exists(resolved_filepath) && resolved_filepath.extension() == ".jsonc") {
+        std::filesystem::path json_fallback = resolved_filepath;
+        json_fallback.replace_extension(".json");
+        if (std::filesystem::exists(json_fallback)) {
+            resolved_filepath = json_fallback;
+        }
+    }
+
     // Check if the file exists before trying to canonicalize
-    if (!std::filesystem::exists(config_filepath)) {
+    if (!std::filesystem::exists(resolved_filepath)) {
         _loading_failed = true;
-        _config_filepath = config_filepath;
+        _config_filepath = resolved_filepath;
         return;
     }
 
-    auto canonical_config_filepath = std::filesystem::canonical(config_filepath);
+    auto canonical_config_filepath = std::filesystem::canonical(resolved_filepath);
 
     const auto& previous_config_filepath = _config_filepath;
     _config_filepath = canonical_config_filepath;
@@ -635,10 +646,9 @@ inline std::optional<WebDashConfig> GetBestMatchingConfig(const std::filesystem:
     if (!std::filesystem::exists(path)) {
         TryAutoCloneModule(path);
     }
-    // If the path exists but is a directory without webdash.config.jsonc, also try to clone
+    // If the path exists but is a directory without a project config, also try to clone
     else if (std::filesystem::is_directory(path)) {
-        auto config_path = path / WebDashConst::Public::kProjectConfigFilename;
-        if (!std::filesystem::exists(config_path)) {
+        if (!WebDashCore::ResolveProjectConfigPath(path).has_value()) {
             TryAutoCloneModule(path);
         }
     }
@@ -674,7 +684,8 @@ inline std::optional<WebDashConfig> GetBestMatchingConfig(const std::filesystem:
         go_up_index <= /*random MAX value*/ 30;
         go_up_index++) {
 
-        std::filesystem::path fs_config_path = current_directory / WebDashConst::Public::kProjectConfigFilename;
+        std::filesystem::path fs_config_path = WebDashCore::ResolveProjectConfigPath(current_directory)
+            .value_or(current_directory / WebDashConst::Public::kProjectConfigFilename);
 
         auto tconfig = WebDashConfig(fs_config_path);
         if (tconfig.LastLodingSucceeded()) return tconfig;

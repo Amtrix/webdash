@@ -37,7 +37,7 @@ Avoid editing unless explicitly needed:
 
 Prefer the project's WebDash interface when possible:
 - `webdash --help`
-- `webdash --list-registered-configs`
+- `webdash --config.register.list`
 - `webdash --ping-server`
 - `webdash <command>`
 - `webdash /path/to/project:command`
@@ -86,7 +86,7 @@ When debugging WebDash behavior:
 2. Resolve whether the command is manual, background, or scheduled.
 3. Check dependencies and path substitutions.
 4. Check the relevant project logs in `app-temporary/logging/`.
-5. Check registered configs with `webdash --list-registered-configs` when scheduler/server behavior is involved.
+5. Check registered configs with `webdash --config.register.list` when scheduler/server behavior is involved.
 
 ## Editing Rules
 
@@ -141,7 +141,7 @@ Scheduled execution requires:
 
 When debugging scheduled tasks:
 - Check `webdash --ping-server`.
-- Check `webdash --list-registered-configs`.
+- Check `webdash --config.register.list`.
 - Check `app-persistent/data/webdash-server/registered-configs.txt`.
 - Check logs under `app-temporary/logging/webdash-server/`.
 
