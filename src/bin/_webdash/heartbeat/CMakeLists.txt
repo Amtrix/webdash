@@ -7,7 +7,7 @@ set (CMAKE_CXX_STANDARD_REQUIRED ON)
 set (CMAKE_CXX_FLAGS "-msse4.2 -Wall -Wextra -O3 -g")
 
 ###### Include directories
-FIND_PACKAGE(Boost 1.65 COMPONENTS system filesystem REQUIRED)
+FIND_PACKAGE(Boost 1.65 COMPONENTS filesystem REQUIRED)
 include_directories(${Boost_INCLUDE_DIR})
 include_directories(${EXTERNAL_LIB_PATH}/json/include)
 include_directories(${EXTERNAL_LIB_PATH}/websocketpp)

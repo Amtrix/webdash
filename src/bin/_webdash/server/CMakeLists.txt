@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 
 project(webdash-server)
 
-FIND_PACKAGE(Boost 1.65 COMPONENTS system filesystem REQUIRED)
+FIND_PACKAGE(Boost 1.65 COMPONENTS filesystem REQUIRED)
 INCLUDE_DIRECTORIES( ${Boost_INCLUDE_DIR} )
 INCLUDE_DIRECTORIES( "$ENV{WEBDASH}/src/common" )
 INCLUDE_DIRECTORIES( "$ENV{WEBDASH}/src/bin/_webdash/server/common" )

@@ -12,7 +12,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "$ENV{WEBDASH}/app-persistent/lib")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "$ENV{WEBDASH}/app-persistent/lib")
 
 # Prefer config packages (BoostConfig.cmake); required for CMake >= 3.30.
-find_package(Boost REQUIRED COMPONENTS system filesystem)
+find_package(Boost REQUIRED COMPONENTS filesystem)
 
 add_library(webdash-executor STATIC)
 
@@ -47,7 +47,7 @@ target_compile_options(webdash-executor PRIVATE -msse4.2 -Wall -Wextra -O3 -g -f
 target_link_options(webdash-executor PRIVATE -rdynamic)
 
 # Link Boost targets (filesystem depends on system on some platforms)
-target_link_libraries(webdash-executor PRIVATE Boost::filesystem Boost::system)
+target_link_libraries(webdash-executor PRIVATE Boost::filesystem)
 
 # NOTE:
 # - Removed INCLUDE_DIRECTORIES(${Boost_INCLUDE_DIR}) and Boost_INCLUDE_DIR usage.

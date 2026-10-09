@@ -7,11 +7,15 @@
 #   1. Clone external dependencies (libraries, server, etc.)
 #   2. Build the core executor library
 #   3. Build and install the `webdash` CLI client
-#   4. Build and install the server (systemd, skipped in test mode)
+#   4. Build and install the server, then enable+start its systemd service
+#      (needs sudo; skipped in test mode)
 #   5. Generate and wire up the shell init script
 #
 # Requirements: git, cmake, make, g++ (>= 9), libboost-all-dev, and an SSH key
 # configured for GitHub (clones use git@github.com URLs).
+#
+# Optional: iptables (install manually: sudo apt install -y iptables). Only needed
+# for WSL port forwarding via `webdash --tools.ports.forwarded.add <port>`.
 #
 # Usage:
 #   ./install.sh                                    # Normal setup
@@ -194,14 +198,34 @@ clone_bootstrap_dependencies() {
     done < <(strip_jsonc_comments "$profile")
 }
 
+# Applies .webdash-setup/patches/<repo-dir-name>.patch to a cloned dependency,
+# if one exists. Idempotent: skips when the patch is already applied.
+# Why: e.g. websocketpp upstream still uses Asio APIs removed in Boost >= 1.87.
+apply_dependency_patch() {
+    local dest_path="$1"
+    local patch_file="$WEBDASH/.webdash-setup/patches/$(basename "$dest_path").patch"
+
+    [[ -f "$patch_file" ]] || return 0
+
+    if git -C "$dest_path" apply --check -R "$patch_file" >/dev/null 2>&1; then
+        log_info "Patch already applied: $(basename "$patch_file")"
+    elif git -C "$dest_path" apply "$patch_file"; then
+        log_success "Applied patch: $(basename "$patch_file")"
+    else
+        log_error "Failed to apply $(basename "$patch_file") to $dest_path"
+        return 1
+    fi
+}
+
 clone_single_repo() {
     local dest_path="$1"
     local git_url="$2"
     local branch="$3"
 
     if [[ -d "$dest_path" ]]; then
-        log_info "Already exists: $dest_path (skipping)"
-        return 0
+        log_info "Already exists: $dest_path (skipping clone)"
+        apply_dependency_patch "$dest_path"
+        return $?
     fi
 
     log_info "Cloning: $git_url"
@@ -218,6 +242,7 @@ clone_single_repo() {
         fi
     fi
     log_success "Cloned: $(basename "$dest_path")"
+    apply_dependency_patch "$dest_path"
 }
 
 # =============================================================================
@@ -252,6 +277,12 @@ main() {
     require_command cmake
     require_command make
     require_command g++
+
+    # Optional: only needed for `webdash --tools.ports.forwarded.add` (WSL port forwarding).
+    if ! command -v iptables >/dev/null 2>&1; then
+        log_warn "iptables not found. Port forwarding (webdash --tools.ports.forwarded.add) needs it."
+        log_warn "  Install it manually if you want that: sudo apt install -y iptables"
+    fi
 
     # Step 1: Create the standard directory layout.
     log_info "Creating directory structure..."
@@ -316,12 +347,39 @@ main() {
         fi
         log_success "WebDash server built (not installed in test mode)"
     else
-        log_info "Building and starting WebDash Server..."
-        if ! "$WEBDASH/app-persistent/bin/webdash" "$WEBDASH/src/bin/_webdash/server:all"; then
-            log_error "Failed to build/start WebDash server"
+        local webdash_bin="$WEBDASH/app-persistent/bin/webdash"
+        local server_proj="$WEBDASH/src/bin/_webdash/server"
+
+        log_info "Building and installing WebDash Server..."
+        if ! "$webdash_bin" "$server_proj:all"; then
+            log_error "Failed to build/install WebDash server"
             log_warn "You can try manually later: webdash \$WEBDASH/src/bin/_webdash/server:all"
         else
-            log_success "WebDash server started"
+            log_success "WebDash server installed"
+
+            # ':all' only builds + installs the binary. ':systemd' creates, enables and
+            # starts the service; it uses sudo, so it may prompt for your password.
+            log_info "Installing and starting the WebDash server systemd service (sudo required)..."
+            if ! "$webdash_bin" "$server_proj:systemd"; then
+                log_error "Failed to install/start the WebDash server systemd service"
+                log_warn "You can try manually later: webdash \$WEBDASH/src/bin/_webdash/server:systemd"
+            else
+                # Confirm the server actually answers before claiming success.
+                local server_up=false
+                for _ in $(seq 1 10); do
+                    if "$webdash_bin" --ping-server >/dev/null 2>&1; then
+                        server_up=true
+                        break
+                    fi
+                    sleep 1
+                done
+                if [[ "$server_up" == true ]]; then
+                    log_success "WebDash server is running"
+                else
+                    log_warn "WebDash server service was installed but did not respond to --ping-server"
+                    log_warn "Check: systemctl status webdash-server.service"
+                fi
+            fi
         fi
     fi
 

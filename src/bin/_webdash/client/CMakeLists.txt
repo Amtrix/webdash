@@ -9,7 +9,7 @@ if(POLICY CMP0167)
   cmake_policy(SET CMP0167 OLD)
 endif()
 
-find_package(Boost REQUIRED COMPONENTS system filesystem)
+find_package(Boost REQUIRED COMPONENTS filesystem)
 
 add_executable(webdash)
 
@@ -47,6 +47,5 @@ set_target_properties(webdash PROPERTIES
 target_link_libraries(webdash
   PRIVATE
     Boost::filesystem
-    Boost::system
     webdash-executor
 )
