@@ -14,8 +14,10 @@
 # Requirements: git, cmake, make, g++ (>= 9), libboost-all-dev, and an SSH key
 # configured for GitHub (clones use git@github.com URLs).
 #
-# Optional: iptables (install manually: sudo apt install -y iptables). Only needed
-# for WSL port forwarding via `webdash --tools.ports.forwarded.add <port>`.
+# Optional (install manually: sudo apt install -y curl unzip iptables):
+#   curl, unzip - the default profile downloads the Android SDK with them
+#   iptables    - WSL port forwarding via `webdash --tools.ports.forwarded.add <port>`
+# Setup warns about any that are missing and carries on.
 #
 # Usage:
 #   ./install.sh                                    # Normal setup
@@ -278,10 +280,17 @@ main() {
     require_command make
     require_command g++
 
-    # Optional: only needed for `webdash --tools.ports.forwarded.add` (WSL port forwarding).
-    if ! command -v iptables >/dev/null 2>&1; then
-        log_warn "iptables not found. Port forwarding (webdash --tools.ports.forwarded.add) needs it."
-        log_warn "  Install it manually if you want that: sudo apt install -y iptables"
+    # Optional tools: setup continues without them, but the features noted below won't work.
+    local missing_optional=()
+    command -v curl >/dev/null 2>&1     || missing_optional+=("curl (downloads the Android SDK in the default profile)")
+    command -v unzip >/dev/null 2>&1    || missing_optional+=("unzip (unpacks the Android SDK in the default profile)")
+    command -v iptables >/dev/null 2>&1 || missing_optional+=("iptables (WSL port forwarding: webdash --tools.ports.forwarded.add)")
+    if [[ ${#missing_optional[@]} -gt 0 ]]; then
+        log_warn "Optional tools not found:"
+        for tool in "${missing_optional[@]}"; do
+            log_warn "  - $tool"
+        done
+        log_warn "Install them manually if you need those features: sudo apt install -y curl unzip iptables"
     fi
 
     # Step 1: Create the standard directory layout.
@@ -375,6 +384,16 @@ main() {
                 done
                 if [[ "$server_up" == true ]]; then
                     log_success "WebDash server is running"
+
+                    # The portal UI is only served once its project is registered.
+                    local portal_config="$WEBDASH/src/bin/_webdash/portal-user-interface/webdash.config.jsonc"
+                    if [[ -f "$portal_config" ]]; then
+                        if "$webdash_bin" --config.register.add "$portal_config" >/dev/null 2>&1; then
+                            log_success "Portal registered (served at /portal/ on the static file server port, default 8780)"
+                        else
+                            log_warn "Could not register the portal. Try: webdash --config.register.add $portal_config"
+                        fi
+                    fi
                 else
                     log_warn "WebDash server service was installed but did not respond to --ping-server"
                     log_warn "Check: systemctl status webdash-server.service"
@@ -392,7 +411,7 @@ main() {
     local init_script="$WEBDASH/app-persistent/data/webdash-client/initialize-projects.sh"
     if [[ -f "$init_script" ]]; then
         chmod +x "$init_script"
-        "$init_script" || log_warn "Some projects may have failed to initialize"
+        "$init_script" || log_warn "Some projects failed to initialize (see the list above). Fix the cause, then run: webdash --profile.reapply"
     fi
 
     # -------------------------------------------------------------------------

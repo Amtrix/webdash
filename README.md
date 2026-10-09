@@ -15,13 +15,18 @@ with optional scheduling and a shared environment profile.
 - `git`, `cmake`, `make`, `g++` (>= 9)
 - `libboost-all-dev`
 - An SSH key configured for GitHub (setup clones over `git@github.com:` URLs)
+- Optional: `curl` and `unzip` (the default profile downloads the Android SDK) and `iptables`
+  (WSL port forwarding via `webdash --tools.ports.forwarded.add`). Setup warns if they are missing.
 
 On Debian/Ubuntu:
 
 ```bash
 sudo apt-get update
-sudo apt-get install git cmake make g++ libboost-all-dev
+sudo apt-get install git cmake make g++ libboost-all-dev curl unzip iptables
 ```
+
+If setup reports that some projects failed to initialize, fix the cause (e.g. install the missing
+tool) and run `webdash --profile.reapply`. It is safe to re-run: existing projects are skipped.
 
 ## Install
 
